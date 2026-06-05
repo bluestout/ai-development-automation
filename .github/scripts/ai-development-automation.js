@@ -41,7 +41,7 @@ async function fetchThemeFiles() {
   const data = await res.json();
   const liquidFiles = data.tree
     .filter(f => f.path.endsWith(".liquid") && f.type === "blob")
-    .slice(0, 5);
+    .slice(0, 2); // Sirf 2 files — token limit ke liye
 
   const files = {};
   for (const file of liquidFiles) {
@@ -49,7 +49,10 @@ async function fetchThemeFiles() {
       headers: { Authorization: `token ${token}` }
     });
     const contentData = await contentRes.json();
-    files[file.path] = Buffer.from(contentData.content, "base64").toString("utf-8");
+    // Content 500 characters tak limit
+    files[file.path] = Buffer.from(contentData.content, "base64")
+      .toString("utf-8")
+      .slice(0, 500);
   }
 
   return files;
@@ -69,8 +72,8 @@ Task Description: ${process.env.TASK_DESCRIPTION}
 
 Current theme files:
 ${Object.entries(themeFiles)
-  .map(([path, content]) => `--- ${path} ---\n${content}`)
-  .join("\n\n")}
+            .map(([path, content]) => `--- ${path} ---\n${content}`)
+            .join("\n\n")}
 
 Instructions:
 - Make ONLY the changes described in the task
@@ -90,7 +93,7 @@ Response format:
         `
       }
     ],
-    max_tokens: 4000,
+    max_tokens: 2000,
   });
 
   const text = completion.choices[0].message.content;
