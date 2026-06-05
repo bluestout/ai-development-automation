@@ -4,57 +4,56 @@ const fetch = require("node-fetch");
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 async function main() {
-  console.log("🚀 AI Deploy started...");
+  console.log("🚀 AI Deployment started");
   console.log("Task:", process.env.TASK_NAME);
   console.log("Description:", process.env.TASK_DESCRIPTION);
 
   try {
-    // STEP 1 — Theme files fetch karo
+    // STEP 1 — Fetch relevant theme files
     console.log("\n📁 [1/5] Fetching theme files...");
     const themeFiles = await fetchThemeFiles();
     console.log(`Found ${Object.keys(themeFiles).length} relevant files`);
 
-    // STEP 2 — AI se changes generate karo
+    // STEP 2 — Generate code changes with AI
     console.log("\n🤖 [2/5] Generating AI changes...");
     const changes = await generateWithGroq(themeFiles);
     console.log("Files to update:", changes.files.map(f => f.path));
     console.log("Summary:", changes.summary);
 
-    // AI changes validate karo — koi files nahi to fail karo
+    // Validate AI changes — fail early if nothing was generated
     if (!changes.files || changes.files.length === 0) {
-      throw new Error("AI ne koi changes generate nahi kiye — task description check karein");
+      throw new Error("AI did not generate any changes — please review the task description");
     }
 
-    // Validate karo k har file mein actual content hai
     for (const file of changes.files) {
       if (!file.path || !file.content || file.content.trim().length < 10) {
-        throw new Error(`File '${file.path}' ka content empty ya invalid hai`);
+        throw new Error(`File '${file.path}' has empty or invalid content`);
       }
     }
 
-    console.log("✅ AI changes validated — aage process ho raha hai");
+    console.log("✅ AI changes validated — proceeding");
 
-    // STEP 3 — Branch banao aur changes push karo (sirf AI success ke baad)
+    // STEP 3 — Create branch and push changes (only after AI succeeds)
     console.log("\n🌿 [3/5] Creating branch and pushing changes...");
     const branchName = await createBranchAndPush(changes);
     console.log("Branch created:", branchName);
 
-    // STEP 4 — Shopify staging theme banao (sirf branch push ke baad)
+    // STEP 4 — Create Shopify staging theme (only after branch is pushed)
     console.log("\n🛍️ [4/5] Creating staging theme...");
     const theme = await createStagingTheme(branchName, changes);
     console.log("Staging theme created:", theme.name);
     console.log("Preview URL:", theme.previewUrl);
 
-    // STEP 5 — ClickUp mein success comment karo (sirf sab kuch ready hone ke baad)
-    console.log("\n💬 [5/5] Commenting on ClickUp...");
+    // STEP 5 — Post ClickUp comment (only after everything is ready)
+    console.log("\n💬 [5/5] Posting ClickUp comment...");
     await commentOnClickUp(theme, branchName, changes.summary);
 
-    console.log("\n✅ All done!");
+    console.log("\n✅ Deployment complete!");
 
   } catch (err) {
     console.error("\n❌ Error:", err.message);
     console.error(err.stack);
-    // Sirf ClickUp comment karo failure ka — koi branch ya theme nahi
+    // Only post failure comment — no branch or theme created on error
     await commentOnClickUp({ error: true, message: err.message }, "").catch(() => {});
     process.exit(1);
   }
@@ -111,7 +110,7 @@ async function fetchThemeFiles() {
         )
       ).slice(0, 4);
 
-  console.log("Fetching:", filesToFetch.map(f => f.path));
+  console.log("Fetching files:", filesToFetch.map(f => f.path));
 
   const files = {};
   for (const file of filesToFetch) {
@@ -167,19 +166,19 @@ REQUIRED JSON FORMAT (no other text):
       });
 
       const text = completion.choices[0].message.content.trim();
-      console.log("Groq response preview:", text.slice(0, 200));
+      console.log("AI response preview:", text.slice(0, 200));
 
-      // Markdown code blocks strip karo agar ho
+      // Strip markdown code blocks if present
       const cleaned = text
         .replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/\s*```$/i, "")
         .trim();
 
       const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) throw new Error("Valid JSON nahi mila response mein");
+      if (!jsonMatch) throw new Error("No valid JSON found in AI response");
 
       const parsed = JSON.parse(jsonMatch[0]);
       if (!parsed.files || !Array.isArray(parsed.files)) {
-        throw new Error("Response mein 'files' array nahi hai");
+        throw new Error("AI response is missing the 'files' array");
       }
 
       return parsed;
@@ -190,7 +189,7 @@ REQUIRED JSON FORMAT (no other text):
     }
   }
 
-  throw new Error(`Groq 3 attempts ke baad bhi fail: ${lastError.message}`);
+  throw new Error(`AI failed after 3 attempts: ${lastError.message}`);
 }
 
 // ─── GitHub branch banao aur files push karo ────────────────────────────────
@@ -211,7 +210,7 @@ async function createBranchAndPush(changes) {
     `https://api.github.com/repos/${repo}/git/ref/heads/main`,
     { headers: { Authorization: `token ${token}`, Accept: "application/vnd.github.v3+json" } }
   );
-  if (!refRes.ok) throw new Error(`Main SHA fetch failed: ${refRes.status} - ${await refRes.text()}`);
+  if (!refRes.ok) throw new Error(`Failed to fetch main branch SHA: ${refRes.status} - ${await refRes.text()}`);
 
   const sha = (await refRes.json()).object.sha;
 
@@ -225,7 +224,7 @@ async function createBranchAndPush(changes) {
     }
   );
   if (!branchRes.ok && branchRes.status !== 422) {
-    throw new Error(`Branch create failed: ${branchRes.status} - ${await branchRes.text()}`);
+    throw new Error(`Failed to create branch: ${branchRes.status} - ${await branchRes.text()}`);
   }
 
   // Files push karo
@@ -253,7 +252,7 @@ async function createBranchAndPush(changes) {
         })
       }
     );
-    if (!putRes.ok) throw new Error(`File push failed (${file.path}): ${putRes.status} - ${await putRes.text()}`);
+    if (!putRes.ok) throw new Error(`Failed to push file (${file.path}): ${putRes.status} - ${await putRes.text()}`);
     console.log(`  ✅ Pushed: ${file.path}`);
   }
 
@@ -276,18 +275,18 @@ async function createStagingTheme(branchName, changes) {
       body: JSON.stringify({ theme: { name: stagingName, role: "unpublished" } })
     }
   );
-  if (!newThemeRes.ok) throw new Error(`Staging theme create failed: ${newThemeRes.status} - ${await newThemeRes.text()}`);
+  if (!newThemeRes.ok) throw new Error(`Failed to create staging theme: ${newThemeRes.status} - ${await newThemeRes.text()}`);
 
   const { theme: newTheme } = await newThemeRes.json();
-  if (!newTheme?.id) throw new Error("Shopify response mein theme ID nahi");
+  if (!newTheme?.id) throw new Error("Shopify response is missing theme ID");
 
   console.log(`  Theme created: ${newTheme.name} (id: ${newTheme.id})`);
 
-  // Shopify ko theme initialize karne ka waqt do
+  // Wait for Shopify to initialize the theme
   await new Promise(r => setTimeout(r, 4000));
 
-  // AI ke changed files staging theme mein upload karo
-  console.log(`  Uploading ${changes.files.length} files to staging theme...`);
+  // Upload AI-changed files to the staging theme
+  console.log(`  Uploading ${changes.files.length} file(s) to staging theme...`);
   for (const file of changes.files) {
     const assetRes = await fetch(
       `https://${store}/admin/api/2024-01/themes/${newTheme.id}/assets.json`,
@@ -314,19 +313,19 @@ async function createStagingTheme(branchName, changes) {
 // ─── ClickUp task pe comment karo ───────────────────────────────────────────
 async function commentOnClickUp(theme, branchName, summary) {
   const taskId = process.env.TASK_ID;
-  if (!taskId) { console.warn("TASK_ID nahi — ClickUp comment skip"); return; }
+  if (!taskId) { console.warn("TASK_ID not set — skipping ClickUp comment"); return; }
 
   const commentText = theme.error
-    ? `❌ AI Automation Failed!\n\nError: ${theme.message}\n\nLogs: https://github.com/${process.env.REPO_NAME}/actions`
+    ? `❌ AI Automation Failed!\n\nError: ${theme.message}\n\nView logs: https://github.com/${process.env.REPO_NAME}/actions`
     : [
         `✅ AI Staging Theme Ready!`,
         ``,
         `🎨 Theme: ${theme.name}`,
         `🔗 Preview: ${theme.previewUrl}`,
         `🌿 Branch: ${branchName}`,
-        `📝 Changes: ${summary || "AI ne task ke mutabiq changes apply kiye"}`,
+        `📝 Changes: ${summary || "AI applied changes based on the task description"}`,
         ``,
-        `Please review karein aur approve karein live karne se pehle.`
+        `Please review and approve before pushing to production.`
       ].join("\n");
 
   const res = await fetch(
