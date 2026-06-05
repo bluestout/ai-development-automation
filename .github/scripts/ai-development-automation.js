@@ -277,43 +277,32 @@ async function duplicateThemeAndApplyChanges(changes) {
 
   let copied = 0;
   let failed = 0;
-  const BATCH_SIZE = 5;
 
-  for (let i = 0; i < assetsToCopy.length; i += BATCH_SIZE) {
-    const batch = assetsToCopy.slice(i, i + BATCH_SIZE);
+  for (let i = 0; i < assetsToCopy.length; i++) {
+    const asset = assetsToCopy[i];
 
-    await Promise.all(batch.map(async (asset) => {
-      // Fetch full content of each asset
-      const contentRes = await fetch(
-        `https://${SHOPIFY_STORE}/admin/api/2024-01/themes/${liveTheme.id}/assets.json?asset[key]=${encodeURIComponent(asset.key)}`,
-        { headers: SHOPIFY_HEADERS }
-      );
-      if (!contentRes.ok) { failed++; return; }
-      const { asset: fullAsset } = await contentRes.json();
-      if (!fullAsset) { failed++; return; }
+    // Fetch full content — retry once on 429
+    const fullAsset = await fetchAssetWithRetry(liveTheme.id, asset.key);
+    if (!fullAsset) { failed++; continue; }
 
-      // Upload to staging theme
-      const body = fullAsset.value !== undefined
-        ? { asset: { key: asset.key, value: fullAsset.value } }
-        : fullAsset.attachment !== undefined
-          ? { asset: { key: asset.key, attachment: fullAsset.attachment } }
-          : null;
+    const body = fullAsset.value !== undefined
+      ? { asset: { key: asset.key, value: fullAsset.value } }
+      : fullAsset.attachment !== undefined
+        ? { asset: { key: asset.key, attachment: fullAsset.attachment } }
+        : null;
 
-      if (!body) { failed++; return; }
+    if (!body) { failed++; continue; }
 
-      const uploadRes = await fetch(
-        `https://${SHOPIFY_STORE}/admin/api/2024-01/themes/${stagingTheme.id}/assets.json`,
-        { method: "PUT", headers: SHOPIFY_HEADERS, body: JSON.stringify(body) }
-      );
-      if (uploadRes.ok) { copied++; }
-      else { failed++; console.warn(`  ⚠️  Copy failed: ${asset.key} (${uploadRes.status})`); }
-    }));
+    // Upload to staging — retry once on 429
+    const uploaded = await putAssetWithRetry(stagingTheme.id, body);
+    if (uploaded) { copied++; }
+    else { failed++; console.warn(`  ⚠️  Copy failed: ${asset.key}`); }
 
-    // Small delay between batches to respect Shopify rate limits (40 req/s)
-    if (i + BATCH_SIZE < assetsToCopy.length) await new Promise(r => setTimeout(r, 300));
+    // 500ms between each asset — stays well under Shopify's 2 req/s bucket
+    await new Promise(r => setTimeout(r, 500));
 
-    if ((i + BATCH_SIZE) % 50 === 0) {
-      console.log(`  Progress: ${Math.min(i + BATCH_SIZE, assetsToCopy.length)}/${assetsToCopy.length} assets`);
+    if ((i + 1) % 20 === 0) {
+      console.log(`  Progress: ${i + 1}/${assetsToCopy.length} assets`);
     }
   }
   console.log(`  ✅ Copied ${copied} assets (${failed} skipped)`);
@@ -341,6 +330,47 @@ async function duplicateThemeAndApplyChanges(changes) {
     name: stagingTheme.name,
     previewUrl: `https://${SHOPIFY_STORE}/?preview_theme_id=${stagingTheme.id}`
   };
+}
+
+// ─── Shopify asset fetch with 429 retry ──────────────────────────────────────
+async function fetchAssetWithRetry(themeId, key) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const res = await fetch(
+      `https://${SHOPIFY_STORE}/admin/api/2024-01/themes/${themeId}/assets.json?asset[key]=${encodeURIComponent(key)}`,
+      { headers: SHOPIFY_HEADERS }
+    );
+    if (res.ok) {
+      const { asset } = await res.json();
+      return asset || null;
+    }
+    if (res.status === 429) {
+      const retryAfter = parseInt(res.headers.get("Retry-After") || "2", 10);
+      console.warn(`  Rate limited fetching ${key} — waiting ${retryAfter}s`);
+      await new Promise(r => setTimeout(r, retryAfter * 1000));
+      continue;
+    }
+    return null;
+  }
+  return null;
+}
+
+// ─── Shopify asset upload with 429 retry ─────────────────────────────────────
+async function putAssetWithRetry(themeId, body) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const res = await fetch(
+      `https://${SHOPIFY_STORE}/admin/api/2024-01/themes/${themeId}/assets.json`,
+      { method: "PUT", headers: SHOPIFY_HEADERS, body: JSON.stringify(body) }
+    );
+    if (res.ok) return true;
+    if (res.status === 429) {
+      const retryAfter = parseInt(res.headers.get("Retry-After") || "2", 10);
+      console.warn(`  Rate limited uploading — waiting ${retryAfter}s`);
+      await new Promise(r => setTimeout(r, retryAfter * 1000));
+      continue;
+    }
+    return false;
+  }
+  return false;
 }
 
 // ─── Post result to ClickUp ───────────────────────────────────────────────────
