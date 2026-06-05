@@ -1,7 +1,16 @@
 const Groq = require("groq-sdk");
 const fetch = require("node-fetch");
+const fs = require("fs");
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+
+// Write value to GitHub Actions output
+function setOutput(name, value) {
+  const outputFile = process.env.GITHUB_OUTPUT;
+  if (outputFile) {
+    fs.appendFileSync(outputFile, `${name}=${value}\n`);
+  }
+}
 
 async function main() {
   console.log("🚀 AI Deployment started");
@@ -10,12 +19,12 @@ async function main() {
 
   try {
     // STEP 1 — Fetch relevant theme files
-    console.log("\n📁 [1/5] Fetching theme files...");
+    console.log("\n📁 [1/3] Fetching theme files...");
     const themeFiles = await fetchThemeFiles();
     console.log(`Found ${Object.keys(themeFiles).length} relevant files`);
 
     // STEP 2 — Generate code changes with AI
-    console.log("\n🤖 [2/5] Generating AI changes...");
+    console.log("\n🤖 [2/3] Generating AI changes...");
     const changes = await generateWithGroq(themeFiles);
     console.log("Files to update:", changes.files.map(f => f.path));
     console.log("Summary:", changes.summary);
@@ -24,37 +33,30 @@ async function main() {
     if (!changes.files || changes.files.length === 0) {
       throw new Error("AI did not generate any changes — please review the task description");
     }
-
     for (const file of changes.files) {
       if (!file.path || !file.content || file.content.trim().length < 10) {
         throw new Error(`File '${file.path}' has empty or invalid content`);
       }
     }
-
     console.log("✅ AI changes validated — proceeding");
 
-    // STEP 3 — Create branch and push changes (only after AI succeeds)
-    console.log("\n🌿 [3/5] Creating branch and pushing changes...");
+    // STEP 3 — Create branch and push AI changes
+    console.log("\n🌿 [3/3] Creating branch and pushing changes...");
     const branchName = await createBranchAndPush(changes);
     console.log("Branch created:", branchName);
 
-    // STEP 4 — Create Shopify staging theme (only after branch is pushed)
-    console.log("\n🛍️ [4/5] Creating staging theme...");
-    const theme = await createStagingTheme(branchName, changes);
-    console.log("Staging theme created:", theme.name);
-    console.log("Preview URL:", theme.previewUrl);
+    // Pass branch name and theme name to next workflow steps via GitHub outputs
+    const themeName = `AI: ${process.env.TASK_NAME || process.env.TASK_ID}`.slice(0, 50);
+    setOutput("branch_name", branchName);
+    setOutput("theme_name", themeName);
+    setOutput("task_summary", changes.summary || "");
 
-    // STEP 5 — Post ClickUp comment (only after everything is ready)
-    console.log("\n💬 [5/5] Posting ClickUp comment...");
-    await commentOnClickUp(theme, branchName, changes.summary);
-
-    console.log("\n✅ Deployment complete!");
+    console.log("\n✅ AI changes pushed — handing off to Shopify CLI step");
 
   } catch (err) {
     console.error("\n❌ Error:", err.message);
     console.error(err.stack);
-    // Only post failure comment — no branch or theme created on error
-    await commentOnClickUp({ error: true, message: err.message }, "").catch(() => {});
+    await postClickUpError(err.message).catch(() => {});
     process.exit(1);
   }
 }
@@ -68,17 +70,12 @@ async function fetchThemeFiles() {
     `https://api.github.com/repos/${repo}/git/trees/main?recursive=1`,
     { headers: { Authorization: `token ${token}`, Accept: "application/vnd.github.v3+json" } }
   );
-
-  if (!treeRes.ok) {
-    throw new Error(`GitHub tree fetch failed: ${treeRes.status} - ${await treeRes.text()}`);
-  }
+  if (!treeRes.ok) throw new Error(`GitHub tree fetch failed: ${treeRes.status} - ${await treeRes.text()}`);
 
   const treeData = await treeRes.json();
   const taskText = `${process.env.TASK_NAME || ""} ${process.env.TASK_DESCRIPTION || ""}`.toLowerCase();
-
   const allLiquidFiles = treeData.tree.filter(f => f.type === "blob" && f.path.endsWith(".liquid"));
 
-  // Task keywords se relevant files identify karo
   const keywordMap = {
     header: ["header"],
     footer: ["footer"],
@@ -132,21 +129,22 @@ async function generateWithGroq(themeFiles) {
     .map(([path, content]) => `=== FILE: ${path} ===\n${content}\n=== END: ${path} ===`)
     .join("\n\n");
 
-      const prompt = `You are an expert Shopify theme developer. Make ONLY the specific changes described in the task below.
-      TASK NAME: ${process.env.TASK_NAME}
-      TASK DESCRIPTION: ${process.env.TASK_DESCRIPTION}
+  const prompt = `You are an expert Shopify theme developer. Make ONLY the specific changes described in the task below.
 
-      CURRENT THEME FILES:
-      ${filesContext}
+TASK NAME: ${process.env.TASK_NAME}
+TASK DESCRIPTION: ${process.env.TASK_DESCRIPTION}
 
-      STRICT RULES:
-      1. Return ONLY valid JSON — no markdown, no explanation, no code blocks
-      2. Only modify files that need to change for this specific task
-      3. Include the COMPLETE file content (not just the changed part)
-      4. If a file doesn't need changes, don't include it
+CURRENT THEME FILES:
+${filesContext}
 
-      REQUIRED JSON FORMAT (no other text):
-      {"files":[{"path":"sections/header.liquid","content":"...complete file content..."}],"summary":"One sentence describing what was changed"}`;
+STRICT RULES:
+1. Return ONLY valid JSON — no markdown, no explanation, no code blocks
+2. Only modify files that need to change for this specific task
+3. Include the COMPLETE file content (not just the changed part)
+4. If a file doesn't need changes, don't include it
+
+REQUIRED JSON FORMAT (no other text):
+{"files":[{"path":"sections/header.liquid","content":"...complete file content..."}],"summary":"One sentence describing what was changed"}`;
 
   let lastError;
   for (let attempt = 1; attempt <= 3; attempt++) {
@@ -167,7 +165,6 @@ async function generateWithGroq(themeFiles) {
       const text = completion.choices[0].message.content.trim();
       console.log("AI response preview:", text.slice(0, 200));
 
-      // Strip markdown code blocks if present
       const cleaned = text
         .replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/\s*```$/i, "")
         .trim();
@@ -203,16 +200,13 @@ async function createBranchAndPush(changes) {
     .slice(0, 50);
   const branchName = `ai/${safeName}`;
 
-  // Main branch ka latest SHA lo
   const refRes = await fetch(
     `https://api.github.com/repos/${repo}/git/ref/heads/main`,
     { headers: { Authorization: `token ${token}`, Accept: "application/vnd.github.v3+json" } }
   );
   if (!refRes.ok) throw new Error(`Failed to fetch main branch SHA: ${refRes.status} - ${await refRes.text()}`);
-
   const sha = (await refRes.json()).object.sha;
 
-  // Branch create karo (422 = already exists — theek hai)
   const branchRes = await fetch(
     `https://api.github.com/repos/${repo}/git/refs`,
     {
@@ -225,11 +219,9 @@ async function createBranchAndPush(changes) {
     throw new Error(`Failed to create branch: ${branchRes.status} - ${await branchRes.text()}`);
   }
 
-  // Files push karo
   for (const file of changes.files) {
     const encoded = Buffer.from(file.content).toString("base64");
 
-    // Existing file SHA lo (update ke liye zaroori)
     let fileSha = null;
     const existingRes = await fetch(
       `https://api.github.com/repos/${repo}/contents/${file.path}?ref=${branchName}`,
@@ -257,81 +249,12 @@ async function createBranchAndPush(changes) {
   return branchName;
 }
 
-// ─── Create staging theme connected to the AI branch via GitHub integration ───
-async function createStagingTheme(branchName, changes) {
-  const store = (process.env.SHOPIFY_STORE || "").replace(/^https?:\/\//, "").replace(/\/$/, "");
-  const token = process.env.SHOPIFY_TOKEN;
-  const repo = process.env.REPO_NAME; // e.g. "bluestout/ai-development-automation"
-  const headers = { "X-Shopify-Access-Token": token, "Content-Type": "application/json" };
-
-  const stagingName = `AI: ${process.env.TASK_NAME || process.env.TASK_ID}`.slice(0, 50);
-
-  // Create theme connected to the GitHub branch — Shopify pulls all files from it
-  console.log(`  Creating staging theme from GitHub branch: ${branchName}`);
-  const createRes = await fetch(`https://${store}/admin/api/2024-01/themes.json`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({
-      theme: {
-        name: stagingName,
-        role: "unpublished",
-        // GitHub source — Shopify uses this to pull the full branch as a theme
-        src: `https://github.com/${repo}/archive/refs/heads/${branchName}.zip`
-      }
-    })
-  });
-
-  if (!createRes.ok) throw new Error(`Failed to create staging theme: ${createRes.status} - ${await createRes.text()}`);
-  const { theme: stagingTheme } = await createRes.json();
-  if (!stagingTheme?.id) throw new Error("Shopify response is missing theme ID");
-  console.log(`  Staging theme created: ${stagingTheme.name} (id: ${stagingTheme.id})`);
-
-  // Wait for Shopify to finish pulling and processing the branch
-  console.log("  Waiting for theme to finish processing...");
-  await waitForThemeReady(store, stagingTheme.id, token);
-  console.log("  ✅ Theme is ready");
-
-  return {
-    id: stagingTheme.id,
-    name: stagingTheme.name,
-    previewUrl: `https://${store}/?preview_theme_id=${stagingTheme.id}`
-  };
-}
-
-// Poll until Shopify finishes processing the theme (ZIP pull is async)
-async function waitForThemeReady(store, themeId, token) {
-  const maxAttempts = 24; // 2 minutes max (24 x 5s)
-  for (let i = 0; i < maxAttempts; i++) {
-    await new Promise(r => setTimeout(r, 5000));
-    const res = await fetch(
-      `https://${store}/admin/api/2024-01/themes/${themeId}.json`,
-      { headers: { "X-Shopify-Access-Token": token } }
-    );
-    if (!res.ok) continue;
-    const { theme } = await res.json();
-    console.log(`  Status: ${theme.processing ? "processing..." : "ready ✅"}`);
-    if (!theme.processing) return;
-  }
-  throw new Error("Theme processing timed out after 2 minutes");
-}
-
-// ─── ClickUp task pe comment karo ───────────────────────────────────────────
-async function commentOnClickUp(theme, branchName, summary) {
+// ─── Post error to ClickUp if script fails before workflow handoff ───────────
+async function postClickUpError(message) {
   const taskId = process.env.TASK_ID;
-  if (!taskId) { console.warn("TASK_ID not set — skipping ClickUp comment"); return; }
+  if (!taskId) return;
 
-  const commentText = theme.error
-    ? `❌ AI Automation Failed!\n\nError: ${theme.message}\n\nView logs: https://github.com/${process.env.REPO_NAME}/actions`
-    : [
-        `✅ AI Staging Theme Ready!`,
-        ``,
-        `🎨 Theme: ${theme.name}`,
-        `🔗 Preview: ${theme.previewUrl}`,
-        `🌿 Branch: ${branchName}`,
-        `📝 Changes: ${summary || "AI applied changes based on the task description"}`,
-        ``,
-        `Please review and approve before pushing to production.`
-      ].join("\n");
+  const commentText = `❌ AI Automation Failed!\n\nError: ${message}\n\nView logs: https://github.com/${process.env.REPO_NAME}/actions`;
 
   const res = await fetch(
     `https://api.clickup.com/api/v2/task/${taskId}/comment`,
@@ -341,9 +264,7 @@ async function commentOnClickUp(theme, branchName, summary) {
       body: JSON.stringify({ comment_text: commentText })
     }
   );
-
-  if (!res.ok) console.warn(`ClickUp comment failed: ${res.status} - ${await res.text()}`);
-  else console.log("✅ ClickUp comment posted");
+  if (!res.ok) console.warn(`ClickUp error comment failed: ${res.status}`);
 }
 
 main();
