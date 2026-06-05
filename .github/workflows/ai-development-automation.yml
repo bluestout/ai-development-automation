@@ -7,10 +7,10 @@ on:
 jobs:
   ai-development-automation:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
-      - name: Checkout main branch
+      - name: Checkout repo
         uses: actions/checkout@v4
 
       - name: Setup Node.js
@@ -23,8 +23,7 @@ jobs:
           npm init -y
           npm install groq-sdk node-fetch@2
 
-      - name: Run AI script — generate changes and push branch
-        id: ai_script
+      - name: Run AI automation
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           SHOPIFY_STORE: ${{ secrets.SHOPIFY_STORE }}
@@ -36,44 +35,3 @@ jobs:
           TASK_DESCRIPTION: ${{ github.event.client_payload.task_description }}
           REPO_NAME: ${{ github.repository }}
         run: node .github/scripts/ai-development-automation.js
-
-      - name: Checkout AI branch
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ steps.ai_script.outputs.branch_name }}
-
-      - name: Install Shopify CLI
-        run: npm install -g @shopify/cli@latest
-
-      - name: Push theme to Shopify as unpublished staging theme
-        id: shopify_push
-        env:
-          SHOPIFY_FLAG_STORE: ${{ secrets.SHOPIFY_STORE }}
-          SHOPIFY_CLI_THEME_TOKEN: ${{ secrets.SHOPIFY_TOKEN }}
-        run: |
-          OUTPUT=$(shopify theme push \
-            --unpublished \
-            --theme "${{ steps.ai_script.outputs.theme_name }}" \
-            --path . \
-            --no-color 2>&1)
-          echo "$OUTPUT"
-
-          # Extract theme ID from the Shopify CLI output URL
-          THEME_ID=$(echo "$OUTPUT" | grep -oP '(?<=preview_theme_id=)[0-9]+' | head -1)
-          if [ -z "$THEME_ID" ]; then
-            THEME_ID=$(echo "$OUTPUT" | grep -oP '(?<=themes/)[0-9]+' | head -1)
-          fi
-          echo "theme_id=$THEME_ID" >> $GITHUB_OUTPUT
-
-      - name: Post result to ClickUp
-        if: always()
-        env:
-          CLICKUP_API_KEY: ${{ secrets.CLICKUP_API_KEY }}
-          SHOPIFY_STORE: ${{ secrets.SHOPIFY_STORE }}
-          TASK_ID: ${{ github.event.client_payload.task_id }}
-          BRANCH_NAME: ${{ steps.ai_script.outputs.branch_name }}
-          THEME_NAME: ${{ steps.ai_script.outputs.theme_name }}
-          THEME_ID: ${{ steps.shopify_push.outputs.theme_id }}
-          TASK_SUMMARY: ${{ steps.ai_script.outputs.task_summary }}
-          REPO_NAME: ${{ github.repository }}
-        run: node .github/scripts/post-clickup-comment.js
