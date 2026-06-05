@@ -277,32 +277,36 @@ async function duplicateThemeAndApplyChanges(changes) {
 
   let copied = 0;
   let failed = 0;
+  const CONCURRENCY = 3; // 3 parallel fetch+upload pairs, ~250ms apart = safe under Shopify limits
 
-  for (let i = 0; i < assetsToCopy.length; i++) {
-    const asset = assetsToCopy[i];
+  for (let i = 0; i < assetsToCopy.length; i += CONCURRENCY) {
+    const batch = assetsToCopy.slice(i, i + CONCURRENCY);
 
-    // Fetch full content — retry once on 429
-    const fullAsset = await fetchAssetWithRetry(liveTheme.id, asset.key);
-    if (!fullAsset) { failed++; continue; }
+    const results = await Promise.all(batch.map(async (asset) => {
+      const fullAsset = await fetchAssetWithRetry(liveTheme.id, asset.key);
+      if (!fullAsset) return false;
 
-    const body = fullAsset.value !== undefined
-      ? { asset: { key: asset.key, value: fullAsset.value } }
-      : fullAsset.attachment !== undefined
-        ? { asset: { key: asset.key, attachment: fullAsset.attachment } }
-        : null;
+      const body = fullAsset.value !== undefined
+        ? { asset: { key: asset.key, value: fullAsset.value } }
+        : fullAsset.attachment !== undefined
+          ? { asset: { key: asset.key, attachment: fullAsset.attachment } }
+          : null;
 
-    if (!body) { failed++; continue; }
+      if (!body) return false;
 
-    // Upload to staging — retry once on 429
-    const uploaded = await putAssetWithRetry(stagingTheme.id, body);
-    if (uploaded) { copied++; }
-    else { failed++; console.warn(`  ⚠️  Copy failed: ${asset.key}`); }
+      return putAssetWithRetry(stagingTheme.id, body);
+    }));
 
-    // 500ms between each asset — stays well under Shopify's 2 req/s bucket
-    await new Promise(r => setTimeout(r, 500));
+    results.forEach((ok, idx) => {
+      if (ok) copied++;
+      else { failed++; console.warn(`  ⚠️  Copy failed: ${batch[idx].key}`); }
+    });
 
-    if ((i + 1) % 20 === 0) {
-      console.log(`  Progress: ${i + 1}/${assetsToCopy.length} assets`);
+    // 250ms between batches — 3 req per 250ms = ~12 req/s, within Shopify's leaky bucket
+    if (i + CONCURRENCY < assetsToCopy.length) await new Promise(r => setTimeout(r, 250));
+
+    if ((i + CONCURRENCY) % 30 === 0) {
+      console.log(`  Progress: ${Math.min(i + CONCURRENCY, assetsToCopy.length)}/${assetsToCopy.length} assets`);
     }
   }
   console.log(`  ✅ Copied ${copied} assets (${failed} skipped)`);
