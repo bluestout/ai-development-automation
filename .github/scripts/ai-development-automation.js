@@ -175,8 +175,13 @@ async function createBranchAndPush(changes) {
   const repo = process.env.REPO_NAME;
   const taskId = process.env.TASK_ID;
 
-  // Timestamp ki jagah task ID use karo — predictable branch name
-  const branchName = `ai-task-${taskId}`;
+  // Task name se branch name banao — lowercase, spaces ko hyphens
+  const safeName = (process.env.TASK_NAME || taskId)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 50);
+  const branchName = `ai/${safeName}`;
 
   // Main branch ka latest SHA lo
   const refRes = await fetch(
@@ -280,7 +285,7 @@ async function createStagingTheme(branchName, changes) {
   console.log("Live theme:", liveTheme.name, "(id:", liveTheme.id + ")");
 
   // Staging theme banao — blank (Shopify direct duplication API support nahi karta)
-  const stagingName = `AI-Staging-${taskId}`;
+  const stagingName = `AI: ${process.env.TASK_NAME || taskId}`.slice(0, 50);
 
   const newThemeRes = await fetch(
     `https://${store}/admin/api/2024-01/themes.json`,
