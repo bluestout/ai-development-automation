@@ -1,0 +1,36 @@
+name: AI Development Automation
+
+on:
+  repository_dispatch:
+    types: [ai-development-automation]
+
+jobs:
+  ai-development-automation:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        run: |
+          npm init -y
+          npm install @google/generative-ai node-fetch
+
+      - name: Run AI Development Automation Script
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          SHOPIFY_STORE: ${{ secrets.SHOPIFY_STORE }}
+          SHOPIFY_TOKEN: ${{ secrets.SHOPIFY_TOKEN }}
+          CLICKUP_API_KEY: ${{ secrets.CLICKUP_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TASK_ID: ${{ github.event.client_payload.task_id }}
+          TASK_NAME: ${{ github.event.client_payload.task_name }}
+          TASK_DESCRIPTION: ${{ github.event.client_payload.task_description }}
+          REPO_NAME: ${{ github.repository }}
+        run: node .github/scripts/ai-development-automation.js
