@@ -132,22 +132,21 @@ async function generateWithGroq(themeFiles) {
     .map(([path, content]) => `=== FILE: ${path} ===\n${content}\n=== END: ${path} ===`)
     .join("\n\n");
 
-  const prompt = `You are an expert Shopify theme developer. Make ONLY the specific changes described in the task below.
+      const prompt = `You are an expert Shopify theme developer. Make ONLY the specific changes described in the task below.
+      TASK NAME: ${process.env.TASK_NAME}
+      TASK DESCRIPTION: ${process.env.TASK_DESCRIPTION}
 
-TASK NAME: ${process.env.TASK_NAME}
-TASK DESCRIPTION: ${process.env.TASK_DESCRIPTION}
+      CURRENT THEME FILES:
+      ${filesContext}
 
-CURRENT THEME FILES:
-${filesContext}
+      STRICT RULES:
+      1. Return ONLY valid JSON — no markdown, no explanation, no code blocks
+      2. Only modify files that need to change for this specific task
+      3. Include the COMPLETE file content (not just the changed part)
+      4. If a file doesn't need changes, don't include it
 
-STRICT RULES:
-1. Return ONLY valid JSON — no markdown, no explanation, no code blocks
-2. Only modify files that need to change for this specific task
-3. Include the COMPLETE file content (not just the changed part)
-4. If a file doesn't need changes, don't include it
-
-REQUIRED JSON FORMAT (no other text):
-{"files":[{"path":"sections/header.liquid","content":"...complete file content..."}],"summary":"One sentence describing what was changed"}`;
+      REQUIRED JSON FORMAT (no other text):
+      {"files":[{"path":"sections/header.liquid","content":"...complete file content..."}],"summary":"One sentence describing what was changed"}`;
 
   let lastError;
   for (let attempt = 1; attempt <= 3; attempt++) {
@@ -188,7 +187,6 @@ REQUIRED JSON FORMAT (no other text):
       if (attempt < 3) await new Promise(r => setTimeout(r, 2000));
     }
   }
-
   throw new Error(`AI failed after 3 attempts: ${lastError.message}`);
 }
 
