@@ -257,48 +257,87 @@ async function createBranchAndPush(changes) {
   return branchName;
 }
 
-// ─── Shopify mein staging theme banao ───────────────────────────────────────
+// ─── Shopify staging theme banao (live theme copy + AI changes on top) ───────
 async function createStagingTheme(branchName, changes) {
-  // Strip any protocol prefix — script constructs the full URL itself
   const store = (process.env.SHOPIFY_STORE || "").replace(/^https?:\/\//, "").replace(/\/$/, "");
   const token = process.env.SHOPIFY_TOKEN;
+  const headers = { "X-Shopify-Access-Token": token, "Content-Type": "application/json" };
 
-  // Staging theme banao
+  // Step 1 — Get live theme ID
+  const themesRes = await fetch(`https://${store}/admin/api/2024-01/themes.json`, { headers });
+  if (!themesRes.ok) throw new Error(`Failed to fetch themes: ${themesRes.status} - ${await themesRes.text()}`);
+  const { themes } = await themesRes.json();
+  const liveTheme = themes.find(t => t.role === "main") || themes[0];
+  if (!liveTheme) throw new Error("No live theme found in Shopify store");
+  console.log(`  Live theme: ${liveTheme.name} (id: ${liveTheme.id})`);
+
+  // Step 2 — Create blank staging theme
   const stagingName = `AI: ${process.env.TASK_NAME || process.env.TASK_ID}`.slice(0, 50);
-
-  const newThemeRes = await fetch(
-    `https://${store}/admin/api/2024-01/themes.json`,
-    {
-      method: "POST",
-      headers: { "X-Shopify-Access-Token": token, "Content-Type": "application/json" },
-      body: JSON.stringify({ theme: { name: stagingName, role: "unpublished" } })
-    }
-  );
+  const newThemeRes = await fetch(`https://${store}/admin/api/2024-01/themes.json`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ theme: { name: stagingName, role: "unpublished" } })
+  });
   if (!newThemeRes.ok) throw new Error(`Failed to create staging theme: ${newThemeRes.status} - ${await newThemeRes.text()}`);
-
   const { theme: newTheme } = await newThemeRes.json();
   if (!newTheme?.id) throw new Error("Shopify response is missing theme ID");
+  console.log(`  Staging theme created: ${newTheme.name} (id: ${newTheme.id})`);
 
-  console.log(`  Theme created: ${newTheme.name} (id: ${newTheme.id})`);
+  // Step 3 — Fetch all assets from live theme
+  console.log("  Fetching all assets from live theme...");
+  const allAssets = await fetchAllThemeAssets(store, liveTheme.id, token);
+  console.log(`  Found ${allAssets.length} assets in live theme`);
 
-  // Wait for Shopify to initialize the theme
-  await new Promise(r => setTimeout(r, 4000));
+  // Step 4 — Copy all live theme assets to staging theme
+  // AI-changed file paths for quick lookup
+  const aiChangedPaths = new Set(changes.files.map(f => f.path));
 
-  // Upload AI-changed files to the staging theme
-  console.log(`  Uploading ${changes.files.length} file(s) to staging theme...`);
+  console.log("  Copying live theme assets to staging theme...");
+  let copied = 0;
+  for (const asset of allAssets) {
+    // Skip AI-changed files — we'll upload those separately with AI content
+    if (aiChangedPaths.has(asset.key)) continue;
+
+    // Fetch full asset content (list endpoint only returns keys, not content)
+    const assetDetail = await fetchAssetContent(store, liveTheme.id, asset.key, token);
+    if (!assetDetail) continue;
+
+    const body = assetDetail.value !== undefined
+      ? JSON.stringify({ asset: { key: asset.key, value: assetDetail.value } })
+      : assetDetail.attachment !== undefined
+        ? JSON.stringify({ asset: { key: asset.key, attachment: assetDetail.attachment } })
+        : null;
+
+    if (!body) continue;
+
+    const uploadRes = await fetch(
+      `https://${store}/admin/api/2024-01/themes/${newTheme.id}/assets.json`,
+      { method: "PUT", headers, body }
+    );
+    if (uploadRes.ok) {
+      copied++;
+    } else {
+      const err = await uploadRes.text();
+      console.warn(`  ⚠️ Copy failed (${asset.key}): ${uploadRes.status} - ${err}`);
+    }
+  }
+  console.log(`  ✅ Copied ${copied} assets from live theme`);
+
+  // Step 5 — Upload AI-changed files on top
+  console.log(`  Uploading ${changes.files.length} AI-modified file(s)...`);
   for (const file of changes.files) {
-    const assetRes = await fetch(
+    const uploadRes = await fetch(
       `https://${store}/admin/api/2024-01/themes/${newTheme.id}/assets.json`,
       {
         method: "PUT",
-        headers: { "X-Shopify-Access-Token": token, "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({ asset: { key: file.path, value: file.content } })
       }
     );
-    if (!assetRes.ok) {
-      console.warn(`  ⚠️ Asset upload failed (${file.path}): ${assetRes.status} - ${await assetRes.text()}`);
+    if (!uploadRes.ok) {
+      console.warn(`  ⚠️ AI asset upload failed (${file.path}): ${uploadRes.status} - ${await uploadRes.text()}`);
     } else {
-      console.log(`  ✅ Asset uploaded: ${file.path}`);
+      console.log(`  ✅ AI asset uploaded: ${file.path}`);
     }
   }
 
@@ -307,6 +346,26 @@ async function createStagingTheme(branchName, changes) {
     name: newTheme.name,
     previewUrl: `https://${store}/?preview_theme_id=${newTheme.id}`
   };
+}
+
+// Fetch paginated asset list from a theme (keys only)
+async function fetchAllThemeAssets(store, themeId, token) {
+  const res = await fetch(
+    `https://${store}/admin/api/2024-01/themes/${themeId}/assets.json`,
+    { headers: { "X-Shopify-Access-Token": token } }
+  );
+  if (!res.ok) throw new Error(`Failed to fetch theme assets: ${res.status} - ${await res.text()}`);
+  const { assets } = await res.json();
+  return assets || [];
+}
+
+// Fetch a single asset's full content
+async function fetchAssetContent(store, themeId, assetKey, token) {
+  const url = `https://${store}/admin/api/2024-01/themes/${themeId}/assets.json?asset[key]=${encodeURIComponent(assetKey)}`;
+  const res = await fetch(url, { headers: { "X-Shopify-Access-Token": token } });
+  if (!res.ok) return null;
+  const { asset } = await res.json();
+  return asset || null;
 }
 
 // ─── ClickUp task pe comment karo ───────────────────────────────────────────
