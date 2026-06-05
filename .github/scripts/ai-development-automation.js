@@ -217,7 +217,7 @@ async function commentOnClickUp(theme, branchName) {
     {
       method: "POST",
       headers: {
-        Authorization: apiKey,
+        Authorization: process.env.CLICKUP_API_KEY,
         "Content-Type": "application/json"
       },
       body: JSON.stringify({ comment_text: commentText })
