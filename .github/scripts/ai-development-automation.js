@@ -259,7 +259,8 @@ async function createBranchAndPush(changes) {
 
 // ─── Shopify mein staging theme banao ───────────────────────────────────────
 async function createStagingTheme(branchName, changes) {
-  const store = process.env.SHOPIFY_STORE;
+  // Strip any protocol prefix — script constructs the full URL itself
+  const store = (process.env.SHOPIFY_STORE || "").replace(/^https?:\/\//, "").replace(/\/$/, "");
   const token = process.env.SHOPIFY_TOKEN;
 
   // Staging theme banao
