@@ -21,7 +21,7 @@ jobs:
       - name: Install dependencies
         run: |
           npm init -y
-          npm install groq-sdk
+          npm install groq-sdk node-fetch@2
 
       - name: Run AI Development Automation Script
         env:
