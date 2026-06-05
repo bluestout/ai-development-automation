@@ -1,5 +1,5 @@
-const { GoogleGenerativeAI } = require("@google/generative-ai");
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const Groq = require("groq-sdk");
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 async function main() {
     console.log("🚀 AI Deploy started...");
@@ -12,7 +12,7 @@ async function main() {
 
         // 2. Gemini se changes generate karo
         console.log("🤖 Generating AI changes...");
-        const changes = await generateWithGemini(themeFiles);
+        const changes = await generateWithGrok(themeFiles);
 
         // 3. Branch banao aur push karo
         console.log("🌿 Creating branch...");
@@ -63,37 +63,47 @@ async function fetchThemeFiles() {
     return files;
 }
 
-// ─── Gemini AI Code Generation ────────────────────────────
-async function generateWithGemini(themeFiles) {
-    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
-    const prompt = `
-        You are a Shopify theme developer.
-        Task Name: ${process.env.TASK_NAME}
-        Task Description: ${process.env.TASK_DESCRIPTION}
-        Current theme files:${Object.entries(themeFiles).map(([path, content]) => `--- ${path} ---\n${content}`).join("\n\n")}
+// ─── Groq AI Code Generation ──────────────────────────
+async function generateWithGrok(themeFiles) {
+  const completion = await groq.chat.completions.create({
+    model: "llama-3.3-70b-versatile",
+    messages: [
+      {
+        role: "user",
+        content: `
+            You are a Shopify theme developer.
 
-        Instructions:
-            - Make ONLY the changes described in the task
-            - Do NOT change anything else
-            - Return ONLY valid JSON, no explanation
+            Task Name: ${process.env.TASK_NAME}
+            Task Description: ${process.env.TASK_DESCRIPTION}
 
-        Response format:
-            {
-                "files": [
-                    {
+            Current theme files:
+            ${Object.entries(themeFiles).map(([path, content]) => `--- ${path} ---\n${content}`).join("\n\n")}
+
+            Instructions:
+                - Make ONLY the changes described in the task
+                - Do NOT change anything else
+                - Return ONLY valid JSON, no explanation, no markdown
+
+            Response format:
+                {
+                    "files": [
+                      {
                         "path": "sections/header.liquid",
                         "content": "...full updated file content..."
-                    }
-                ],
-                "summary": "Brief description of what was changed"
-            }
-        `;
+                      }
+                    ],
+                    "summary": "Brief description of what was changed"
+                }
+            `
+      }
+    ],
+    max_tokens: 4000,
+  });
 
-    const result = await model.generateContent(prompt);
-    const text = result.response.text();
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) throw new Error("Gemini ne valid JSON return nahi kiya");
-    return JSON.parse(jsonMatch[0]);
+  const text = completion.choices[0].message.content;
+  const jsonMatch = text.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) throw new Error("Groq ne valid JSON return nahi kiya");
+  return JSON.parse(jsonMatch[0]);
 }
 
 // ─── Create Branch and Push Changes ──────────────────────

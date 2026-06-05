@@ -20,11 +20,11 @@ jobs:
       - name: Install dependencies
         run: |
           npm init -y
-          npm install @google/generative-ai node-fetch
+          npm install groq-sdk node-fetch
 
       - name: Run AI Development Automation Script
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           SHOPIFY_STORE: ${{ secrets.SHOPIFY_STORE }}
           SHOPIFY_TOKEN: ${{ secrets.SHOPIFY_TOKEN }}
           CLICKUP_API_KEY: ${{ secrets.CLICKUP_API_KEY }}
