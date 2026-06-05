@@ -257,115 +257,62 @@ async function createBranchAndPush(changes) {
   return branchName;
 }
 
-// ─── Shopify staging theme banao (live theme copy + AI changes on top) ───────
+// ─── Create staging theme connected to the AI branch via GitHub integration ───
 async function createStagingTheme(branchName, changes) {
   const store = (process.env.SHOPIFY_STORE || "").replace(/^https?:\/\//, "").replace(/\/$/, "");
   const token = process.env.SHOPIFY_TOKEN;
+  const repo = process.env.REPO_NAME; // e.g. "bluestout/ai-development-automation"
   const headers = { "X-Shopify-Access-Token": token, "Content-Type": "application/json" };
 
-  // Step 1 — Get live theme ID
-  const themesRes = await fetch(`https://${store}/admin/api/2024-01/themes.json`, { headers });
-  if (!themesRes.ok) throw new Error(`Failed to fetch themes: ${themesRes.status} - ${await themesRes.text()}`);
-  const { themes } = await themesRes.json();
-  const liveTheme = themes.find(t => t.role === "main") || themes[0];
-  if (!liveTheme) throw new Error("No live theme found in Shopify store");
-  console.log(`  Live theme: ${liveTheme.name} (id: ${liveTheme.id})`);
-
-  // Step 2 — Create blank staging theme
   const stagingName = `AI: ${process.env.TASK_NAME || process.env.TASK_ID}`.slice(0, 50);
-  const newThemeRes = await fetch(`https://${store}/admin/api/2024-01/themes.json`, {
+
+  // Create theme connected to the GitHub branch — Shopify pulls all files from it
+  console.log(`  Creating staging theme from GitHub branch: ${branchName}`);
+  const createRes = await fetch(`https://${store}/admin/api/2024-01/themes.json`, {
     method: "POST",
     headers,
-    body: JSON.stringify({ theme: { name: stagingName, role: "unpublished" } })
-  });
-  if (!newThemeRes.ok) throw new Error(`Failed to create staging theme: ${newThemeRes.status} - ${await newThemeRes.text()}`);
-  const { theme: newTheme } = await newThemeRes.json();
-  if (!newTheme?.id) throw new Error("Shopify response is missing theme ID");
-  console.log(`  Staging theme created: ${newTheme.name} (id: ${newTheme.id})`);
-
-  // Step 3 — Fetch all assets from live theme
-  console.log("  Fetching all assets from live theme...");
-  const allAssets = await fetchAllThemeAssets(store, liveTheme.id, token);
-  console.log(`  Found ${allAssets.length} assets in live theme`);
-
-  // Step 4 — Copy all live theme assets to staging theme
-  // AI-changed file paths for quick lookup
-  const aiChangedPaths = new Set(changes.files.map(f => f.path));
-
-  console.log("  Copying live theme assets to staging theme...");
-  let copied = 0;
-  for (const asset of allAssets) {
-    // Skip AI-changed files — we'll upload those separately with AI content
-    if (aiChangedPaths.has(asset.key)) continue;
-
-    // Fetch full asset content (list endpoint only returns keys, not content)
-    const assetDetail = await fetchAssetContent(store, liveTheme.id, asset.key, token);
-    if (!assetDetail) continue;
-
-    const body = assetDetail.value !== undefined
-      ? JSON.stringify({ asset: { key: asset.key, value: assetDetail.value } })
-      : assetDetail.attachment !== undefined
-        ? JSON.stringify({ asset: { key: asset.key, attachment: assetDetail.attachment } })
-        : null;
-
-    if (!body) continue;
-
-    const uploadRes = await fetch(
-      `https://${store}/admin/api/2024-01/themes/${newTheme.id}/assets.json`,
-      { method: "PUT", headers, body }
-    );
-    if (uploadRes.ok) {
-      copied++;
-    } else {
-      const err = await uploadRes.text();
-      console.warn(`  ⚠️ Copy failed (${asset.key}): ${uploadRes.status} - ${err}`);
-    }
-  }
-  console.log(`  ✅ Copied ${copied} assets from live theme`);
-
-  // Step 5 — Upload AI-changed files on top
-  console.log(`  Uploading ${changes.files.length} AI-modified file(s)...`);
-  for (const file of changes.files) {
-    const uploadRes = await fetch(
-      `https://${store}/admin/api/2024-01/themes/${newTheme.id}/assets.json`,
-      {
-        method: "PUT",
-        headers,
-        body: JSON.stringify({ asset: { key: file.path, value: file.content } })
+    body: JSON.stringify({
+      theme: {
+        name: stagingName,
+        role: "unpublished",
+        // GitHub source — Shopify uses this to pull the full branch as a theme
+        src: `https://github.com/${repo}/archive/refs/heads/${branchName}.zip`
       }
-    );
-    if (!uploadRes.ok) {
-      console.warn(`  ⚠️ AI asset upload failed (${file.path}): ${uploadRes.status} - ${await uploadRes.text()}`);
-    } else {
-      console.log(`  ✅ AI asset uploaded: ${file.path}`);
-    }
-  }
+    })
+  });
+
+  if (!createRes.ok) throw new Error(`Failed to create staging theme: ${createRes.status} - ${await createRes.text()}`);
+  const { theme: stagingTheme } = await createRes.json();
+  if (!stagingTheme?.id) throw new Error("Shopify response is missing theme ID");
+  console.log(`  Staging theme created: ${stagingTheme.name} (id: ${stagingTheme.id})`);
+
+  // Wait for Shopify to finish pulling and processing the branch
+  console.log("  Waiting for theme to finish processing...");
+  await waitForThemeReady(store, stagingTheme.id, token);
+  console.log("  ✅ Theme is ready");
 
   return {
-    id: newTheme.id,
-    name: newTheme.name,
-    previewUrl: `https://${store}/?preview_theme_id=${newTheme.id}`
+    id: stagingTheme.id,
+    name: stagingTheme.name,
+    previewUrl: `https://${store}/?preview_theme_id=${stagingTheme.id}`
   };
 }
 
-// Fetch paginated asset list from a theme (keys only)
-async function fetchAllThemeAssets(store, themeId, token) {
-  const res = await fetch(
-    `https://${store}/admin/api/2024-01/themes/${themeId}/assets.json`,
-    { headers: { "X-Shopify-Access-Token": token } }
-  );
-  if (!res.ok) throw new Error(`Failed to fetch theme assets: ${res.status} - ${await res.text()}`);
-  const { assets } = await res.json();
-  return assets || [];
-}
-
-// Fetch a single asset's full content
-async function fetchAssetContent(store, themeId, assetKey, token) {
-  const url = `https://${store}/admin/api/2024-01/themes/${themeId}/assets.json?asset[key]=${encodeURIComponent(assetKey)}`;
-  const res = await fetch(url, { headers: { "X-Shopify-Access-Token": token } });
-  if (!res.ok) return null;
-  const { asset } = await res.json();
-  return asset || null;
+// Poll until Shopify finishes processing the theme (ZIP pull is async)
+async function waitForThemeReady(store, themeId, token) {
+  const maxAttempts = 24; // 2 minutes max (24 x 5s)
+  for (let i = 0; i < maxAttempts; i++) {
+    await new Promise(r => setTimeout(r, 5000));
+    const res = await fetch(
+      `https://${store}/admin/api/2024-01/themes/${themeId}.json`,
+      { headers: { "X-Shopify-Access-Token": token } }
+    );
+    if (!res.ok) continue;
+    const { theme } = await res.json();
+    console.log(`  Status: ${theme.processing ? "processing..." : "ready ✅"}`);
+    if (!theme.processing) return;
+  }
+  throw new Error("Theme processing timed out after 2 minutes");
 }
 
 // ─── ClickUp task pe comment karo ───────────────────────────────────────────
