@@ -11,6 +11,9 @@ const SHOPIFY_HEADERS = {
   "Content-Type": "application/json"
 };
 const SHOPIFY_API = "2024-01";
+// themeDuplicate mutation only exists on newer API versions; keep REST on the
+// pinned version above and use this one only for the GraphQL duplicate call.
+const SHOPIFY_GRAPHQL_API = "2026-04";
 
 const CLICKUP_API_KEY = process.env.CLICKUP_API_KEY;
 const TASK_ID = process.env.TASK_ID;
@@ -448,7 +451,10 @@ async function upsertStagingThemeAndApplyChanges(changes, existingThemeId) {
     console.log(`  Stored theme ${existingThemeId} no longer exists — creating a fresh one.`);
   }
 
-  // Fresh-create path: duplicate the live theme, then apply changes on top.
+  // Fresh-create path: duplicate the live theme via Shopify's native
+  // themeDuplicate mutation (Shopify copies every file server-side in one call),
+  // then push ONLY the AI-changed files on top. No manual asset-by-asset copy.
+
   // 1. Get live theme.
   const themesRes = await fetch(
     `https://${SHOPIFY_STORE}/admin/api/${SHOPIFY_API}/themes.json`,
@@ -460,74 +466,97 @@ async function upsertStagingThemeAndApplyChanges(changes, existingThemeId) {
   if (!liveTheme) throw new Error("No live theme found in Shopify store");
   console.log(`  Live theme: ${liveTheme.name} (id: ${liveTheme.id})`);
 
-  // 2. Get all asset keys from live theme.
-  const assetsRes = await fetch(
-    `https://${SHOPIFY_STORE}/admin/api/${SHOPIFY_API}/themes/${liveTheme.id}/assets.json`,
-    { headers: SHOPIFY_HEADERS }
-  );
-  if (!assetsRes.ok) throw new Error(`Failed to fetch assets list: ${assetsRes.status}`);
-  const { assets } = await assetsRes.json();
-  console.log(`  Found ${assets.length} assets in live theme`);
-
-  // 3. Create staging theme — detect the theme-count limit here.
+  // 2. Duplicate it natively. Returns { themeId } or { limitReached: true }.
   const stagingName = `AI: ${process.env.TASK_NAME || TASK_ID}`.slice(0, 50);
-  const newThemeRes = await fetch(
-    `https://${SHOPIFY_STORE}/admin/api/${SHOPIFY_API}/themes.json`,
+  const dup = await duplicateTheme(liveTheme.id, stagingName);
+  if (dup.limitReached) {
+    return { themeId: "", name: "", previewUrl: "", limitReached: true };
+  }
+  console.log(`  Staging theme duplicated: ${dup.name} (id: ${dup.themeId})`);
+
+  // 3. Wait until Shopify finishes copying all files into the new theme.
+  await waitForThemeReady(dup.themeId);
+
+  // 4. Apply ONLY the AI-changed files on top of the exact duplicate.
+  await applyChangesToTheme(dup.themeId, changes);
+
+  return {
+    themeId: String(dup.themeId),
+    name: dup.name,
+    previewUrl: `https://${SHOPIFY_STORE}/?preview_theme_id=${dup.themeId}`,
+    limitReached: false
+  };
+}
+
+// ─── Duplicate a theme via the native themeDuplicate GraphQL mutation ─────────
+// One call copies every file server-side. Returns { themeId, name } on success,
+// or { limitReached: true } if the store is at its theme-count limit.
+async function duplicateTheme(sourceThemeId, name) {
+  const query = `mutation DuplicateTheme($id: ID!, $name: String) {
+    themeDuplicate(id: $id, name: $name) {
+      newTheme { id name role }
+      userErrors { field message }
+    }
+  }`;
+
+  const res = await fetch(
+    `https://${SHOPIFY_STORE}/admin/api/${SHOPIFY_GRAPHQL_API}/graphql.json`,
     {
       method: "POST",
       headers: SHOPIFY_HEADERS,
-      body: JSON.stringify({ theme: { name: stagingName, role: "unpublished" } })
+      body: JSON.stringify({
+        query,
+        variables: { id: `gid://shopify/OnlineStoreTheme/${sourceThemeId}`, name }
+      })
     }
   );
 
-  if (!newThemeRes.ok) {
-    const errText = await newThemeRes.text();
-    if (isThemeLimitError(newThemeRes.status, errText)) {
+  if (!res.ok) {
+    const errText = await res.text();
+    if (isThemeLimitError(res.status, errText)) {
       console.warn(`  ⚠️ Shopify theme limit reached: ${errText}`);
-      return { themeId: "", name: "", previewUrl: "", limitReached: true };
+      return { limitReached: true };
     }
-    throw new Error(`Failed to create staging theme: ${newThemeRes.status} - ${errText}`);
+    throw new Error(`themeDuplicate request failed: ${res.status} - ${errText}`);
   }
-  const { theme: stagingTheme } = await newThemeRes.json();
-  console.log(`  Staging theme created: ${stagingTheme.name} (id: ${stagingTheme.id})`);
 
-  // 4. Copy all live theme assets to staging — batched to avoid rate limits.
-  const aiChangedKeys = new Set(changes.files.map(f => f.path));
-  const assetsToCopy = assets.filter(a => !aiChangedKeys.has(a.key));
-  console.log(`  Copying ${assetsToCopy.length} assets from live theme...`);
-
-  let copied = 0, failed = 0;
-  const CONCURRENCY = 3;
-  for (let i = 0; i < assetsToCopy.length; i += CONCURRENCY) {
-    const batch = assetsToCopy.slice(i, i + CONCURRENCY);
-    const results = await Promise.all(batch.map(async (asset) => {
-      const fullAsset = await fetchAssetWithRetry(liveTheme.id, asset.key);
-      if (!fullAsset) return false;
-      const body = fullAsset.value !== undefined
-        ? { asset: { key: asset.key, value: fullAsset.value } }
-        : fullAsset.attachment !== undefined
-          ? { asset: { key: asset.key, attachment: fullAsset.attachment } }
-          : null;
-      if (!body) return false;
-      return putAssetWithRetry(stagingTheme.id, body);
-    }));
-    results.forEach((ok, idx) => {
-      if (ok) copied++;
-      else { failed++; console.warn(`  ⚠️  Copy failed: ${batch[idx].key}`); }
-    });
-    if (i + CONCURRENCY < assetsToCopy.length) await new Promise(r => setTimeout(r, 250));
+  const json = await res.json();
+  if (json.errors?.length) {
+    throw new Error(`themeDuplicate GraphQL errors: ${JSON.stringify(json.errors)}`);
   }
-  console.log(`  ✅ Copied ${copied} assets (${failed} skipped)`);
+  const payload = json.data?.themeDuplicate;
+  const userErrors = payload?.userErrors || [];
+  if (userErrors.length) {
+    const msg = userErrors.map(e => e.message).join("; ");
+    if (isThemeLimitError(200, msg)) {
+      console.warn(`  ⚠️ Shopify theme limit reached: ${msg}`);
+      return { limitReached: true };
+    }
+    throw new Error(`themeDuplicate failed: ${msg}`);
+  }
 
-  // 5. Apply AI-changed files on top.
-  await applyChangesToTheme(stagingTheme.id, changes);
+  const newTheme = payload?.newTheme;
+  if (!newTheme?.id) throw new Error("themeDuplicate returned no new theme");
+  // newTheme.id is a GID (gid://shopify/OnlineStoreTheme/123); REST needs the numeric id.
+  const numericId = String(newTheme.id).split("/").pop();
+  return { themeId: numericId, name: newTheme.name };
+}
 
-  return {
-    themeId: String(stagingTheme.id),
-    name: stagingTheme.name,
-    previewUrl: `https://${SHOPIFY_STORE}/?preview_theme_id=${stagingTheme.id}`,
-    limitReached: false
-  };
+// ─── Wait for a freshly-duplicated theme to finish processing ─────────────────
+// A duplicated theme is `processing: true` while Shopify copies files; pushing
+// assets before it's ready can fail. Polls the REST theme resource until done.
+async function waitForThemeReady(themeId, maxWaitMs = 120000, intervalMs = 3000) {
+  const deadline = Date.now() + maxWaitMs;
+  while (Date.now() < deadline) {
+    const theme = await themeExists(themeId);
+    if (theme && theme.processing === false) {
+      console.log(`  Duplicate ready (processing complete).`);
+      return;
+    }
+    console.log(`  ⏳ Waiting for duplicate to finish processing...`);
+    await new Promise(r => setTimeout(r, intervalMs));
+  }
+  console.warn(`  ⚠️ Theme ${themeId} still processing after ${maxWaitMs}ms — applying changes anyway.`);
 }
 
 // Detect Shopify's "you have reached the theme limit" condition.
@@ -554,27 +583,6 @@ async function applyChangesToTheme(themeId, changes) {
     if (ok) console.log(`  ✅ Applied AI change: ${file.path}`);
     else console.warn(`  ⚠️  AI file upload failed: ${file.path}`);
   }
-}
-
-// ─── Shopify asset fetch with 429 retry ──────────────────────────────────────
-async function fetchAssetWithRetry(themeId, key) {
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const res = await fetch(
-      `https://${SHOPIFY_STORE}/admin/api/${SHOPIFY_API}/themes/${themeId}/assets.json?asset[key]=${encodeURIComponent(key)}`,
-      { headers: SHOPIFY_HEADERS }
-    );
-    if (res.ok) {
-      const { asset } = await res.json();
-      return asset || null;
-    }
-    if (res.status === 429) {
-      const retryAfter = parseInt(res.headers.get("Retry-After") || "2", 10);
-      await new Promise(r => setTimeout(r, retryAfter * 1000));
-      continue;
-    }
-    return null;
-  }
-  return null;
 }
 
 // ─── Shopify asset upload with 429 retry ─────────────────────────────────────
