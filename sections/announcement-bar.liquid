@@ -1,32 +1,42 @@
-{%- for block in section.blocks -%}
-  {%- case block.type -%}
-    {%- when 'announcement' -%}
-      <div class="announcement-bar color-{{ block.settings.color_scheme }} gradient" role="region" aria-label="{{ 'sections.header.announcement' | t }}" {{ block.shopify_attributes }}>
-        {%- if block.settings.text != blank -%}
-          {%- if block.settings.link != blank -%}
-            <a href="{{ block.settings.link }}" class="announcement-bar__link link link--text focus-inset animate-arrow">
+{%- if section.settings.show_announcement -%}
+  {%- for block in section.blocks -%}
+    {%- case block.type -%}
+      {%- when 'announcement' -%}
+        <div class="announcement-bar color-{{ block.settings.color_scheme }} gradient" role="region" aria-label="{{ 'sections.header.announcement' | t }}" {{ block.shopify_attributes }}>
+          {%- if block.settings.text != blank -%}
+            {%- if block.settings.link != blank -%}
+              <a href="{{ block.settings.link }}" class="announcement-bar__link link link--text focus-inset animate-arrow">
+            {%- endif -%}
+                <div class="page-width">
+                  <p class="announcement-bar__message {{ block.settings.text_alignment }} h5">
+                    <span>{{ block.settings.text | escape }}</span>
+                    {%- if block.settings.link != blank -%}
+                      {% render 'icon-arrow' %}
+                    {%- endif -%}
+                  </p>
+                </div>
+            {%- if block.settings.link != blank -%}
+              </a>
+            {%- endif -%}
           {%- endif -%}
-              <div class="page-width">
-                <p class="announcement-bar__message {{ block.settings.text_alignment }} h5">
-                  <span>{{ block.settings.text | escape }}</span>
-                  {%- if block.settings.link != blank -%}
-                    {% render 'icon-arrow' %}
-                  {%- endif -%}
-                </p>
-              </div>
-          {%- if block.settings.link != blank -%}
-            </a>
-          {%- endif -%}
-        {%- endif -%}
-      </div>
-  {%- endcase -%}
-{%- endfor -%}
+        </div>
+    {%- endcase -%}
+  {%- endfor -%}
+{%- endif -%}
 
 {% schema %}
 {
   "name": "t:sections.announcement-bar.name",
   "max_blocks": 12,
   "class": "announcement-bar-section",
+  "settings": [
+    {
+      "type": "checkbox",
+      "id": "show_announcement",
+      "default": true,
+      "label": "Show announcement"
+    }
+  ],
   "blocks": [
     {
       "type": "announcement",
@@ -35,7 +45,7 @@
         {
           "type": "text",
           "id": "text",
-          "default": "Welcome to our store",
+          "default": "Free shipping on all orders over $100",
           "label": "t:sections.announcement-bar.blocks.announcement.settings.text.label"
         },
         {
@@ -94,12 +104,20 @@
       ]
     }
   ],
-  "default": {
-    "blocks": [
-      {
-        "type": "announcement"
-      }
-    ]
-  }
+  "presets": [
+    {
+      "name": "t:sections.announcement-bar.name",
+      "blocks": [
+        {
+          "type": "announcement",
+          "settings": {
+            "text": "Free shipping on all orders over $100",
+            "text_alignment": "center",
+            "color_scheme": "accent-1"
+          }
+        }
+      ]
+    }
+  ]
 }
 {% endschema %}
