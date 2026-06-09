@@ -4,6 +4,9 @@ on:
   repository_dispatch:
     types: [ai-development-automation]
 
+permissions:
+  contents: write   # create branches + push files via GITHUB_TOKEN
+
 jobs:
   ai-development-automation:
     runs-on: ubuntu-latest
@@ -21,17 +24,22 @@ jobs:
       - name: Install dependencies
         run: |
           npm init -y
-          npm install groq-sdk node-fetch@2
+          npm install @anthropic-ai/sdk node-fetch@2
 
       - name: Run AI automation
         env:
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-          SHOPIFY_STORE: ${{ secrets.SHOPIFY_STORE }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Per-client store comes from the ClickUp custom field via the dispatch
+          # payload; falls back to the SHOPIFY_STORE secret for single-store testing.
+          SHOPIFY_STORE: ${{ github.event.client_payload.shopify_store || secrets.SHOPIFY_STORE }}
+          # One custom-app token works across all client stores in the same Partner org.
           SHOPIFY_TOKEN: ${{ secrets.SHOPIFY_TOKEN }}
           CLICKUP_API_KEY: ${{ secrets.CLICKUP_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TASK_ID: ${{ github.event.client_payload.task_id }}
           TASK_NAME: ${{ github.event.client_payload.task_name }}
           TASK_DESCRIPTION: ${{ github.event.client_payload.task_description }}
-          REPO_NAME: ${{ github.repository }}
+          # Target repo from the ClickUp field if provided, else the repo this
+          # workflow runs in (github.repository).
+          REPO_NAME: ${{ github.event.client_payload.github_repo || github.repository }}
         run: node .github/scripts/ai-development-automation.js
