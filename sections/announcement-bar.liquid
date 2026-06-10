@@ -35,8 +35,13 @@
         {
           "type": "text",
           "id": "text",
-          "default": "Free shipping on all orders over $100",
+          "default": "Welcome to our store",
           "label": "t:sections.announcement-bar.blocks.announcement.settings.text.label"
+        },
+        {
+          "type": "url",
+          "id": "link",
+          "label": "t:sections.announcement-bar.blocks.announcement.settings.link.label"
         },
         {
           "type": "select",
@@ -85,26 +90,24 @@
           ],
           "default": "accent-1",
           "label": "t:sections.all.colors.label"
-        },
-        {
-          "type": "url",
-          "id": "link",
-          "label": "t:sections.announcement-bar.blocks.announcement.settings.link.label"
         }
       ]
     }
   ],
-  "default": {
-    "blocks": [
-      {
-        "type": "announcement",
-        "settings": {
-          "text": "Free shipping on all orders over $100",
-          "color_scheme": "accent-1",
-          "text_alignment": "center"
+  "presets": [
+    {
+      "name": "t:sections.announcement-bar.name",
+      "blocks": [
+        {
+          "type": "announcement",
+          "settings": {
+            "text": "Free shipping on all orders over $100",
+            "text_alignment": "center",
+            "color_scheme": "accent-1"
+          }
         }
-      }
-    ]
-  }
+      ]
+    }
+  ]
 }
 {% endschema %}
