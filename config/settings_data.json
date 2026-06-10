@@ -4,20 +4,19 @@
       "announcement-bar": {
         "type": "announcement-bar",
         "blocks": {
-          "announcement-block-1": {
+          "announcement-1": {
             "type": "announcement",
             "settings": {
               "text": "Free shipping on all orders over $100",
               "text_alignment": "center",
-              "color_scheme": "accent-1",
-              "link": ""
+              "color_scheme": "accent-1"
             }
           }
         },
-        "block_order": ["announcement-block-1"],
-        "settings": {}
+        "block_order": ["announcement-1"],
+        "disabled": false
       }
-    },
-    "content_for_index": []
-  }
+    }
+  },
+  "presets": {}
 }
