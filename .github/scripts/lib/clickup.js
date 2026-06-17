@@ -95,67 +95,95 @@ async function postClickUpComment(opts) {
   else console.log("  ✅ ClickUp comment posted");
 }
 
+// A thin divider line for visual separation (ClickUp comments are plain text,
+// so we lay out structure manually instead of relying on markdown rendering).
+const DIVIDER = "────────────────────────────";
+
+// Join an array of "sections" (each itself a line or array of lines) into one
+// comment, separating each section with a blank line. Falsy entries are dropped.
+function layout(sections) {
+  return sections
+    .filter(Boolean)
+    .map(s => (Array.isArray(s) ? s.filter(Boolean).join("\n") : s))
+    .join("\n\n");
+}
+
 // Pick the right message for each outcome (limit hit / error / theme limit / success).
 function buildCommentText(opts) {
   const { themeName, previewUrl, branchName, branchUrl, summary, error, qa, runCount, reused, themeLimit, limitReached } = opts;
 
   if (limitReached) {
-    return [
-      `🛑 AI Automation Stopped — Run Limit Reached`,
-      ``,
-      `This task has already been processed ${MAX_RUNS} times (the maximum).`,
-      `Unchecking and re-checking "AI Ready" will no longer trigger the automation.`,
-      ``,
-      `If you need more changes, please create a new task.`
-    ].join("\n");
+    return layout([
+      `🛑  AI Automation Stopped — Run Limit Reached`,
+      DIVIDER,
+      [
+        `This task has already been processed ${MAX_RUNS} times (the maximum).`,
+        `Unchecking and re-checking "AI Ready" will no longer trigger the automation.`
+      ],
+      `💡  Need more changes? Please create a new task.`
+    ]);
   }
 
   if (error) {
-    return [
-      `❌ AI Automation Failed!`,
-      ``,
+    return layout([
+      `❌  AI Automation Failed`,
+      DIVIDER,
       `Error: ${error}`,
-      ``,
-      `View logs: https://github.com/${REPO_NAME}/actions`
-    ].join("\n");
+      `🔍  View logs: https://github.com/${REPO_NAME}/actions`
+    ]);
   }
 
   if (themeLimit) {
-    return [
-      `⚠️ AI Changes Ready — but Shopify Theme Limit Reached`,
-      ``,
+    return layout([
+      `⚠️  AI Changes Ready — Shopify Theme Limit Reached`,
+      DIVIDER,
       `The AI changes were generated and pushed, but a new staging theme could not be created because your Shopify store has reached its theme limit.`,
-      ``,
-      `🌿 Branch: ${branchName}`,
-      `🔗 Branch link: ${branchUrl}`,
-      `📝 Changes: ${summary || "AI applied changes based on the task description"}`,
-      qaLine(qa),
-      ``,
-      `👉 Please delete an unused theme in Shopify, then re-check "AI Ready" to create the preview theme. (Run ${runCount}/${MAX_RUNS})`
-    ].filter(Boolean).join("\n");
+      [
+        `🌿  Branch:  ${branchName}`,
+        `🔗  Link:    ${branchUrl}`,
+        `📝  Changes: ${summary || "AI applied changes based on the task description"}`
+      ],
+      qaBlock(qa),
+      DIVIDER,
+      [
+        `👉  Next step: delete an unused theme in Shopify, then re-check "AI Ready" to create the preview.`,
+        `🔁  Run ${runCount}/${MAX_RUNS}`
+      ]
+    ]);
   }
 
-  return [
-    `✅ AI Staging Theme Ready!${reused ? " (updated existing theme & branch)" : ""}`,
-    ``,
-    `🎨 Theme: ${themeName}`,
-    `🔗 Preview: ${previewUrl}`,
-    `🌿 Branch: ${branchName}`,
-    `🔗 Branch link: ${branchUrl}`,
-    `📝 Changes: ${summary || "AI applied changes based on the task description"}`,
-    qaLine(qa),
-    ``,
-    `🔁 Run ${runCount}/${MAX_RUNS}. Uncheck and re-check "AI Ready" to re-run on the SAME branch & theme.`,
-    ``,
-    `Please review and approve before pushing to production.`
-  ].filter(Boolean).join("\n");
+  return layout([
+    `✅  AI Staging Theme Ready${reused ? "  (updated existing theme & branch)" : ""}`,
+    DIVIDER,
+    [
+      `🎨  Theme:   ${themeName}`,
+      `🔗  Preview: ${previewUrl}`
+    ],
+    [
+      `🌿  Branch:  ${branchName}`,
+      `🔗  Link:    ${branchUrl}`,
+      `📝  Changes: ${summary || "AI applied changes based on the task description"}`
+    ],
+    qaBlock(qa),
+    DIVIDER,
+    [
+      `🔁  Run ${runCount}/${MAX_RUNS} — uncheck & re-check "AI Ready" to re-run on the same branch & theme.`,
+      `👀  Please review and approve before pushing to production.`
+    ]
+  ]);
 }
 
-function qaLine(qa) {
+// QA verdict as its own section. Returns "" when there's no verdict (dropped by layout()).
+function qaBlock(qa) {
   if (!qa) return "";
-  if (qa.approved) return `🧪 QA: Passed ✅ (${qa.iterations} iteration${qa.iterations > 1 ? "s" : ""})`;
-  const issues = (qa.issues || []).slice(0, 5).map(x => `   • ${x}`).join("\n");
-  return `🧪 QA: Flagged ⚠️ after ${qa.iterations} iterations — manual review recommended:\n${issues}`;
+  if (qa.approved) {
+    return `🧪  QA: Passed ✅  (${qa.iterations} iteration${qa.iterations > 1 ? "s" : ""})`;
+  }
+  const issues = (qa.issues || []).slice(0, 5).map(x => `      • ${x}`).join("\n");
+  return [
+    `🧪  QA: Flagged ⚠️  after ${qa.iterations} iteration${qa.iterations > 1 ? "s" : ""} — manual review recommended:`,
+    issues
+  ].filter(Boolean).join("\n");
 }
 
 module.exports = { loadRunState, saveRunState, postClickUpComment };
