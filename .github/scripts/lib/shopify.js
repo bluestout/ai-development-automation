@@ -5,7 +5,7 @@
 const fetch = require("node-fetch");
 const {
   SHOPIFY_STORE, SHOPIFY_HEADERS, SHOPIFY_API, SHOPIFY_GRAPHQL_API,
-  TASK_NAME, TASK_ID
+  TASK_NAME, slugify
 } = require("./config");
 
 // ─── Find-or-create the staging theme, then apply the AI changes ─────────────
@@ -13,11 +13,11 @@ const {
 // otherwise we duplicate the live theme. If Shopify rejects the create due to
 // the theme limit, we return { limitReached: true }.
 async function upsertStagingThemeAndApplyChanges(changes, existingThemeId) {
-  // Re-run path: stored theme still present → update it in place.
+  // Re-run path: if the stored theme still exists, update it in place.
   if (existingThemeId) {
     const theme = await getTheme(existingThemeId);
     if (theme) {
-      console.log(`  Reusing existing staging theme (id: ${existingThemeId})`);
+      console.log(`  Reusing staging theme: ${theme.name} (id: ${existingThemeId})`);
       await applyChangesToTheme(existingThemeId, changes);
       return {
         themeId: existingThemeId,
@@ -26,20 +26,17 @@ async function upsertStagingThemeAndApplyChanges(changes, existingThemeId) {
         limitReached: false
       };
     }
-    console.log(`  Stored theme ${existingThemeId} no longer exists — creating a fresh one.`);
   }
 
-  // Fresh-create path: duplicate the live theme natively (Shopify copies every
-  // file server-side in one call), then push ONLY the AI-changed files on top.
+  // Fresh-create path: duplicate the live theme (one server-side copy), then
+  // push only the AI-changed files on top.
   const liveTheme = await getLiveTheme();
-  console.log(`  Live theme: ${liveTheme.name} (id: ${liveTheme.id})`);
-
-  const stagingName = `AI: ${TASK_NAME || TASK_ID}`.slice(0, 50);
+  const stagingName = `ai/${slugify(TASK_NAME)}`; // mirrors the branch name
   const dup = await duplicateTheme(liveTheme.id, stagingName);
   if (dup.limitReached) {
     return { themeId: "", name: "", previewUrl: "", limitReached: true };
   }
-  console.log(`  Staging theme duplicated: ${dup.name} (id: ${dup.themeId})`);
+  console.log(`  Created staging theme: ${dup.name} (id: ${dup.themeId})`);
 
   await waitForThemeReady(dup.themeId);
   await applyChangesToTheme(dup.themeId, changes);
@@ -138,11 +135,7 @@ async function waitForThemeReady(themeId, maxWaitMs = 120000, intervalMs = 3000)
   const deadline = Date.now() + maxWaitMs;
   while (Date.now() < deadline) {
     const theme = await getTheme(themeId);
-    if (theme && theme.processing === false) {
-      console.log(`  Duplicate ready (processing complete).`);
-      return;
-    }
-    console.log(`  ⏳ Waiting for duplicate to finish processing...`);
+    if (theme && theme.processing === false) return;
     await new Promise(r => setTimeout(r, intervalMs));
   }
   console.warn(`  ⚠️ Theme ${themeId} still processing after ${maxWaitMs}ms — applying changes anyway.`);
@@ -150,11 +143,9 @@ async function waitForThemeReady(themeId, maxWaitMs = 120000, intervalMs = 3000)
 
 // ─── Apply the AI-changed files to a theme ───────────────────────────────────
 async function applyChangesToTheme(themeId, changes) {
-  console.log(`  Applying ${changes.files.length} AI-modified file(s) to theme ${themeId}...`);
   for (const file of changes.files) {
     const ok = await putAssetWithRetry(themeId, { asset: { key: file.path, value: file.content } });
-    if (ok) console.log(`  ✅ Applied AI change: ${file.path}`);
-    else console.warn(`  ⚠️  AI file upload failed: ${file.path}`);
+    if (!ok) console.warn(`  ⚠️  Failed to apply: ${file.path}`);
   }
 }
 

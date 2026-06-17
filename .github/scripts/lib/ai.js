@@ -79,9 +79,8 @@ async function devQaLoop(themeFiles, plan) {
   let qaFeedback = null;
 
   for (let i = 1; i <= MAX_QA_LOOPS; i++) {
-    console.log(`  — QA review (iteration ${i}/${MAX_QA_LOOPS})...`);
     const verdict = await qaReviewWithClaude(themeFiles, changes);
-    console.log(`    QA: ${verdict.approved ? "APPROVED" : "CHANGES REQUESTED"} — ${verdict.summary}`);
+    console.log(`  QA (${i}/${MAX_QA_LOOPS}): ${verdict.approved ? "APPROVED" : "CHANGES REQUESTED"} — ${verdict.summary}`);
 
     if (verdict.approved) {
       return { changes, qa: { approved: true, iterations: i, issues: [], summary: verdict.summary } };
@@ -94,8 +93,7 @@ async function devQaLoop(themeFiles, plan) {
       return { changes, qa: { approved: false, iterations: i, issues: verdict.issues || [], summary: verdict.summary } };
     }
 
-    // Feed QA feedback back to Dev for a fix.
-    console.log(`    Sending QA feedback back to Dev AI...`);
+    // Feed QA's feedback back to Dev for a fix.
     changes = await generateWithClaude(themeFiles, qaFeedback, plan);
     validateChanges(changes);
   }
@@ -145,7 +143,6 @@ REQUIRED JSON FORMAT (no other text):
     system: "You are a Shopify theme developer. Respond with valid JSON only. No markdown, no code blocks, no explanation.",
     prompt,
     label: "Dev",
-    previewResponse: true,
     validate: (p) => {
       if (!p.files || !Array.isArray(p.files)) throw new Error("AI response missing 'files' array");
     }
@@ -222,7 +219,7 @@ function validateChanges(changes) {
 
 // ─── Shared Claude helper: call, retry 3x, extract + validate JSON ───────────
 // All three roles share the same "ask for strict JSON" shape, so it lives here.
-async function askClaudeForJson({ model, maxTokens, system, prompt, label, validate, previewResponse }) {
+async function askClaudeForJson({ model, maxTokens, system, prompt, label, validate }) {
   let lastError;
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
@@ -235,8 +232,6 @@ async function askClaudeForJson({ model, maxTokens, system, prompt, label, valid
       });
 
       const text = (msg.content.find(b => b.type === "text")?.text || "").trim();
-      if (previewResponse) console.log(`    ${label} AI response preview:`, text.slice(0, 150));
-
       const parsed = extractJson(text);
       if (validate) validate(parsed);
       return parsed;

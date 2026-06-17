@@ -2,7 +2,7 @@
 // Reads the theme's file tree + file contents, and creates/updates the AI branch.
 
 const fetch = require("node-fetch");
-const { GITHUB_TOKEN, REPO_NAME, TASK_ID, TASK_NAME } = require("./config");
+const { GITHUB_TOKEN, REPO_NAME, TASK_NAME, slugify } = require("./config");
 
 const GH_HEADERS = {
   Authorization: `token ${GITHUB_TOKEN}`,
@@ -67,23 +67,16 @@ async function fetchFileContents(paths) {
 }
 
 // ─── Find-or-create the AI branch, then push the changed files ───────────────
-// Idempotent: a branch is identified by the `ai/<taskId>-` prefix. If one
-// already exists (re-run), we reuse it instead of creating a new branch.
+// The branch is named ai/<task-name-slug> ("Add Announcement Bar" →
+// ai/add-announcement-bar), so re-runs of the same task reuse it.
 async function createBranchAndPush(changes) {
-  const branchPrefix = `ai/${TASK_ID}-`;
-  const namePart = (TASK_NAME || "")
-    .toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
+  const branchName = `ai/${slugify(TASK_NAME)}`;
 
-  // Reuse an existing branch with this task's prefix (handles renamed tasks);
-  // otherwise fall back to the canonical <prefix><name>.
-  const existing = await findExistingBranch(branchPrefix);
-  const branchName = existing || `${branchPrefix}${namePart}`;
-
-  if (existing) {
-    console.log(`  Reusing existing branch: ${branchName}`);
+  if (await findExistingBranch(branchName)) {
+    console.log(`  Reusing branch: ${branchName}`);
   } else {
     await createBranch(branchName);
-    console.log(`  Created new branch: ${branchName}`);
+    console.log(`  Created branch: ${branchName}`);
   }
 
   for (const file of changes.files) {
@@ -138,17 +131,21 @@ async function pushFile(branchName, file) {
   if (!res.ok) throw new Error(`Failed to push ${file.path}: ${res.status} - ${await res.text()}`);
 }
 
-async function findExistingBranch(prefix) {
+// Returns the branch name if a branch with this EXACT name already exists, else null.
+async function findExistingBranch(branchName) {
+  const wantRef = `refs/heads/${branchName}`;
   const res = await fetch(
-    `https://api.github.com/repos/${REPO_NAME}/git/refs/heads/${encodeURIComponent(prefix)}`,
+    `https://api.github.com/repos/${REPO_NAME}/git/refs/heads/${encodeURIComponent(branchName)}`,
     { headers: GH_HEADERS }
   );
   if (!res.ok) return null;
   const data = await res.json();
-  // GitHub returns an array on prefix match, or a single object on exact match.
-  if (Array.isArray(data) && data.length > 0) return data[0].ref.replace("refs/heads/", "");
-  if (data && data.ref) return data.ref.replace("refs/heads/", "");
-  return null;
+  // GitHub returns an array when the path is a prefix match, or a single object
+  // on an exact match. Only accept the branch whose ref matches exactly.
+  if (Array.isArray(data)) {
+    return data.some(r => r.ref === wantRef) ? branchName : null;
+  }
+  return data && data.ref === wantRef ? branchName : null;
 }
 
 module.exports = { fetchFileTree, fetchFileContents, createBranchAndPush };

@@ -44,6 +44,16 @@ const TASK_DESCRIPTION = process.env.TASK_DESCRIPTION;
 const MAX_RUNS = 3;      // user may re-trigger the checkbox at most 3 times
 const MAX_QA_LOOPS = 3;  // Dev <-> QA iterations before giving up
 
+// ── Helpers ──
+// "Add Announcement Bar" → "add-announcement-bar". Used for both the branch name
+// and the staging theme name so they stay in sync.
+const slugify = (name) =>
+  (name || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 50);
+
 module.exports = {
   anthropic,
   PLANNER_MODEL,
@@ -62,5 +72,6 @@ module.exports = {
   TASK_NAME,
   TASK_DESCRIPTION,
   MAX_RUNS,
-  MAX_QA_LOOPS
+  MAX_QA_LOOPS,
+  slugify
 };
