@@ -1,36 +1,21 @@
 // ─── GitHub integration ──────────────────────────────────────────────────────
-// Reads the theme's file tree + file contents, and creates/updates the AI branch.
+// Reads the agent's working-tree edits and pushes them to the AI branch.
 
 const fetch = require("node-fetch");
+const fs = require("fs");
+const path = require("path");
+const { execFileSync } = require("child_process");
 const { GITHUB_TOKEN, REPO_NAME, TASK_NAME, slugify } = require("./config");
+
+const REPO_ROOT = path.resolve(__dirname, "..", "..", "..");
 
 const GH_HEADERS = {
   Authorization: `token ${GITHUB_TOKEN}`,
   Accept: "application/vnd.github.v3+json"
 };
 
-// ─── Fetch the full theme file tree (paths only) ─────────────────────────────
-// Returns the list of editable theme paths: Liquid (structure/markup) AND JSON
-// (content — templates/*.json + section group JSON). Content like the
-// announcement-bar text lives in JSON, NOT in the .liquid section file, so the
-// planner MUST be able to see both kinds of files.
-async function fetchFileTree() {
-  const res = await fetch(
-    `https://api.github.com/repos/${REPO_NAME}/git/trees/main?recursive=1`,
-    { headers: GH_HEADERS }
-  );
-  if (!res.ok) throw new Error(`GitHub tree fetch failed: ${res.status} - ${await res.text()}`);
-
-  const { tree } = await res.json();
-
-  return tree
-    .filter(f => f.type === "blob")
-    .map(f => f.path)
-    .filter(isEditableThemeFile);
-}
-
 // Liquid markup, template/section-group JSON (where editor content lives), and
-// section CSS/JS assets.
+// section CSS/JS assets — the file kinds the agent is allowed to ship.
 function isEditableThemeFile(path) {
   return (
     path.endsWith(".liquid") ||
@@ -40,35 +25,33 @@ function isEditableThemeFile(path) {
   );
 }
 
-// ─── Fetch the FULL content of the planner's chosen files ────────────────────
-// JSON content files are fetched whole (no truncation) so the AI can edit a
-// single value without dropping the rest of the file. Large Liquid files are
-// capped to keep prompt size sane.
-async function fetchFileContents(paths) {
-  const files = {};
+// ─── Read the agent's edits from the git working tree ────────────────────────
+// The agent edits files in place; we diff the tree (modified + untracked) to
+// learn what it touched. Returns { files: [{path, content}], summary } — the
+// shape the push + theme steps expect.
+function getChangedFiles(summary) {
+  // -z = NUL-separated, robust against spaces/newlines in paths.
+  const modified = execFileSync(
+    "git", ["-C", REPO_ROOT, "diff", "--name-only", "-z", "HEAD"], { encoding: "utf-8" }
+  );
+  const untracked = execFileSync(
+    "git", ["-C", REPO_ROOT, "ls-files", "--others", "--exclude-standard", "-z"], { encoding: "utf-8" }
+  );
 
-  for (const path of paths) {
-    const res = await fetch(
-      `https://api.github.com/repos/${REPO_NAME}/contents/${encodeURIComponent(path)}?ref=main`,
-      { headers: GH_HEADERS }
-    );
-    if (!res.ok) {
-      console.warn(`  Could not fetch ${path}: ${res.status}`);
-      continue;
-    }
-    const data = await res.json();
-    const content = Buffer.from(data.content, "base64").toString("utf-8");
-    // JSON files must be sent whole (editing requires the complete object);
-    // Liquid files are capped to keep the prompt within token limits.
-    files[path] = path.endsWith(".json") ? content : content.slice(0, 8000);
-  }
+  const paths = [...modified.split("\0"), ...untracked.split("\0")]
+    .filter(Boolean)
+    .filter(isEditableThemeFile)
+    .filter((p, i, arr) => arr.indexOf(p) === i);
 
-  return files;
+  const files = paths.map(p => ({
+    path: p,
+    content: fs.readFileSync(path.join(REPO_ROOT, p), "utf-8")
+  }));
+
+  return { files, summary };
 }
 
-// ─── Find-or-create the AI branch, then push the changed files ───────────────
-// The branch is named ai/<task-name-slug> ("Add Announcement Bar" →
-// ai/add-announcement-bar), so re-runs of the same task reuse it.
+// Branch is named ai/<task-name-slug> so re-runs of the same task reuse it.
 async function createBranchAndPush(changes) {
   const branchName = `ai/${slugify(TASK_NAME)}`;
 
@@ -148,4 +131,4 @@ async function findExistingBranch(branchName) {
   return data && data.ref === wantRef ? branchName : null;
 }
 
-module.exports = { fetchFileTree, fetchFileContents, createBranchAndPush };
+module.exports = { getChangedFiles, createBranchAndPush };

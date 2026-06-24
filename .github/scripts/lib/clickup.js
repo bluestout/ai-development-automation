@@ -110,7 +110,7 @@ function layout(sections) {
 
 // Pick the right message for each outcome (limit hit / error / theme limit / success).
 function buildCommentText(opts) {
-  const { themeName, previewUrl, branchName, branchUrl, summary, error, qa, runCount, reused, themeLimit, limitReached } = opts;
+  const { themeName, previewUrl, branchName, branchUrl, summary, error, runCount, reused, themeLimit, limitReached } = opts;
 
   if (limitReached) {
     return layout([
@@ -143,7 +143,6 @@ function buildCommentText(opts) {
         `🔗  Link:    ${branchUrl}`,
         `📝  Changes: ${summary || "AI applied changes based on the task description"}`
       ],
-      qaBlock(qa),
       DIVIDER,
       [
         `👉  Next step: delete an unused theme in Shopify, then re-check "AI Ready" to create the preview.`,
@@ -164,26 +163,12 @@ function buildCommentText(opts) {
       `🔗  Link:    ${branchUrl}`,
       `📝  Changes: ${summary || "AI applied changes based on the task description"}`
     ],
-    qaBlock(qa),
     DIVIDER,
     [
       `🔁  Run ${runCount}/${MAX_RUNS} — uncheck & re-check "AI Ready" to re-run on the same branch & theme.`,
       `👀  Please review and approve before pushing to production.`
     ]
   ]);
-}
-
-// QA verdict as its own section. Returns "" when there's no verdict (dropped by layout()).
-function qaBlock(qa) {
-  if (!qa) return "";
-  if (qa.approved) {
-    return `🧪  QA: Passed ✅  (${qa.iterations} iteration${qa.iterations > 1 ? "s" : ""})`;
-  }
-  const issues = (qa.issues || []).slice(0, 5).map(x => `      • ${x}`).join("\n");
-  return [
-    `🧪  QA: Flagged ⚠️  after ${qa.iterations} iteration${qa.iterations > 1 ? "s" : ""} — manual review recommended:`,
-    issues
-  ].filter(Boolean).join("\n");
 }
 
 module.exports = { loadRunState, saveRunState, postClickUpComment };

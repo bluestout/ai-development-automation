@@ -24,7 +24,7 @@ jobs:
       - name: Install dependencies
         run: |
           npm init -y
-          npm install @anthropic-ai/sdk node-fetch@2
+          npm install @anthropic-ai/claude-agent-sdk node-fetch@2
 
       - name: Run AI automation
         env:
@@ -35,6 +35,11 @@ jobs:
           # One custom-app token works across all client stores in the same Partner org.
           SHOPIFY_TOKEN: ${{ secrets.SHOPIFY_TOKEN }}
           CLICKUP_API_KEY: ${{ secrets.CLICKUP_API_KEY }}
+          # Figma personal access token (file-read scope). When a task references
+          # a figma.com URL, the design is fetched and injected into the Dev AI
+          # prompt. Optional — without it, Figma-referencing tasks just skip the
+          # design fetch.
+          FIGMA_TOKEN: ${{ secrets.FIGMA_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TASK_ID: ${{ github.event.client_payload.task_id }}
           TASK_NAME: ${{ github.event.client_payload.task_name }}
