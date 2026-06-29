@@ -4,11 +4,14 @@
 // (validates its own work). It edits files in place; lib/github.js reads them
 // back from the working tree for the unchanged branch/theme/ClickUp deploy path.
 
+const path = require("path");
 const { query } = require("@anthropic-ai/claude-agent-sdk");
 const {
-  REPO_ROOT, AGENT_MODEL, MAX_AGENT_TURNS, FIGMA_TOKEN,
+  AGENT_MODEL, MAX_AGENT_TURNS, FIGMA_TOKEN,
   TASK_NAME, TASK_DESCRIPTION
 } = require("./config");
+
+const REPO_ROOT = path.resolve(__dirname, "..", "..", "..");
 
 const FIGMA_URL_RE =
   /https?:\/\/(?:www\.)?figma\.com\/(?:file|design|proto)\/[A-Za-z0-9]+[^\s)]*/i;

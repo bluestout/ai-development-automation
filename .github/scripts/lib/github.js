@@ -5,7 +5,9 @@ const fetch = require("node-fetch");
 const fs = require("fs");
 const path = require("path");
 const { execFileSync } = require("child_process");
-const { REPO_ROOT, GITHUB_TOKEN, REPO_NAME, BASE_BRANCH, TASK_NAME, slugify } = require("./config");
+const { GITHUB_TOKEN, REPO_NAME, TASK_NAME, slugify } = require("./config");
+
+const REPO_ROOT = path.resolve(__dirname, "..", "..", "..");
 
 const GH_HEADERS = {
   Authorization: `token ${GITHUB_TOKEN}`,
@@ -70,10 +72,10 @@ async function createBranchAndPush(changes) {
 
 async function createBranch(branchName) {
   const refRes = await fetch(
-    `https://api.github.com/repos/${REPO_NAME}/git/ref/heads/${BASE_BRANCH}`,
+    `https://api.github.com/repos/${REPO_NAME}/git/ref/heads/main`,
     { headers: GH_HEADERS }
   );
-  if (!refRes.ok) throw new Error(`Failed to fetch ${BASE_BRANCH} SHA: ${refRes.status}`);
+  if (!refRes.ok) throw new Error(`Failed to fetch main SHA: ${refRes.status}`);
   const sha = (await refRes.json()).object.sha;
 
   const res = await fetch(`https://api.github.com/repos/${REPO_NAME}/git/refs`, {

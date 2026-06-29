@@ -1,15 +1,5 @@
 // ─── Shared config: env vars, model, limits ──────────────────────────────────
 
-const path = require("path");
-
-// ── Theme working tree ── where the agent reads/edits and github.js diffs.
-// On CI this is the client theme checked out at GITHUB_WORKSPACE. The
-// reusable workflow checks the central scripts out into a subfolder, so we
-// can't infer the theme root from __dirname anymore. Local fallback keeps the
-// old single-repo layout (<theme-root>/.github/scripts/lib/) working.
-const REPO_ROOT =
-  process.env.GITHUB_WORKSPACE || path.resolve(__dirname, "..", "..", "..");
-
 // ── Agent (lib/agent.js) ── SDK reads ANTHROPIC_API_KEY from env.
 const AGENT_MODEL = "claude-opus-4-8";
 const MAX_AGENT_TURNS = 30; // runaway safeguard on the agent loop
@@ -40,10 +30,6 @@ const FIELD_THEME_ID = "AI Theme ID";
 // ── GitHub ──
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 const REPO_NAME = process.env.REPO_NAME;
-// Base branch the AI branch is cut from. Clients differ (main/master/custom),
-// so the workflow resolves the client repo's default branch and passes it in.
-// Falls back to "main" for the old single-repo path.
-const BASE_BRANCH = process.env.BASE_BRANCH || "main";
 
 // ── Task (from the ClickUp → dispatch payload) ──
 const TASK_NAME = process.env.TASK_NAME;
@@ -60,7 +46,6 @@ const slugify = (name) =>
     .slice(0, 50);
 
 module.exports = {
-  REPO_ROOT,
   AGENT_MODEL,
   MAX_AGENT_TURNS,
   FIGMA_TOKEN,
@@ -74,7 +59,6 @@ module.exports = {
   FIELD_THEME_ID,
   GITHUB_TOKEN,
   REPO_NAME,
-  BASE_BRANCH,
   TASK_NAME,
   TASK_DESCRIPTION,
   MAX_RUNS,
