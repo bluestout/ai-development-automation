@@ -1,0 +1,35 @@
+# Client caller workflow — COPY THIS INTO EACH CLIENT REPO as:
+#   .github/workflows/ai-development-automation.yml
+#
+# This is the ONLY automation file a client repo needs. All the real logic
+# lives in bluestout/ai-development-automation and is pulled in via `uses:`.
+# When the central script changes, every client gets it automatically — no
+# need to touch client repos again.
+#
+# One-time setup per client repo:
+#   1. Add this file (rename to ai-development-automation.yml).
+#   2. Add repo secret SHOPIFY_TOKEN (that store/app's Admin API token).
+#      All other secrets (ANTHROPIC_API_KEY, CLICKUP_API_KEY, FIGMA_TOKEN,
+#      GH_DISPATCH_PAT) are set once at the bluestout org level.
+#
+# Zapier dispatches `ai-development-automation` to this repo when the ClickUp
+# "AI Ready" box is checked; this caller forwards the payload to the central
+# reusable workflow.
+
+name: AI Development Automation
+
+on:
+  repository_dispatch:
+    types: [ai-development-automation]
+
+jobs:
+  run:
+    uses: bluestout/ai-development-automation/.github/workflows/ai-development-automation.yml@main
+    with:
+      shopify_store:    ${{ github.event.client_payload.shopify_store }}
+      github_repo:      ${{ github.event.client_payload.github_repo }}
+      base_branch:      ${{ github.event.client_payload.base_branch }}
+      task_id:          ${{ github.event.client_payload.task_id }}
+      task_name:        ${{ github.event.client_payload.task_name }}
+      task_description: ${{ github.event.client_payload.task_description }}
+    secrets: inherit
