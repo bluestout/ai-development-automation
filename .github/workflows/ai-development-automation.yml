@@ -1,5 +1,9 @@
 name: AI Development Automation
 
+# This workflow is SELF-CONTAINED: copy this file + .github/scripts/ into each
+# client repo as-is. Zapier sends a repository_dispatch when the ClickUp
+# "AI Ready" box is checked; the per-client store comes from the payload, and
+# the Shopify token is a per-repo secret (each store/app has its own token).
 on:
   repository_dispatch:
     types: [ai-development-automation]
@@ -15,6 +19,17 @@ jobs:
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
+
+      # Clients use different default branches (main / master / custom). Resolve
+      # this repo's default branch so the AI branch is cut from the right ref.
+      - name: Resolve default branch
+        id: branch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BRANCH=$(gh api "repos/${{ github.repository }}" --jq '.default_branch')
+          echo "Base branch: $BRANCH"
+          echo "base_branch=$BRANCH" >> "$GITHUB_OUTPUT"
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -32,7 +47,7 @@ jobs:
           # Per-client store comes from the ClickUp custom field via the dispatch
           # payload; falls back to the SHOPIFY_STORE secret for single-store testing.
           SHOPIFY_STORE: ${{ github.event.client_payload.shopify_store || secrets.SHOPIFY_STORE }}
-          # One custom-app token works across all client stores in the same Partner org.
+          # Each store/app has its own Admin API token, so this is a per-repo secret.
           SHOPIFY_TOKEN: ${{ secrets.SHOPIFY_TOKEN }}
           CLICKUP_API_KEY: ${{ secrets.CLICKUP_API_KEY }}
           # Figma personal access token (file-read scope). When a task references
@@ -47,4 +62,6 @@ jobs:
           # Target repo from the ClickUp field if provided, else the repo this
           # workflow runs in (github.repository).
           REPO_NAME: ${{ github.event.client_payload.github_repo || github.repository }}
+          # Auto-detected default branch — the AI branch is cut from this.
+          BASE_BRANCH: ${{ steps.branch.outputs.base_branch }}
         run: node .github/scripts/ai-development-automation.js

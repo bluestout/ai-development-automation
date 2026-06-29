@@ -30,6 +30,10 @@ const FIELD_THEME_ID = "AI Theme ID";
 // ── GitHub ──
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 const REPO_NAME = process.env.REPO_NAME;
+// Base branch the AI branch is cut from. Clients differ (main/master/custom),
+// so the workflow resolves this repo's default branch and passes it in.
+// Falls back to "main" if unset.
+const BASE_BRANCH = process.env.BASE_BRANCH || "main";
 
 // ── Task (from the ClickUp → dispatch payload) ──
 const TASK_NAME = process.env.TASK_NAME;
@@ -59,6 +63,7 @@ module.exports = {
   FIELD_THEME_ID,
   GITHUB_TOKEN,
   REPO_NAME,
+  BASE_BRANCH,
   TASK_NAME,
   TASK_DESCRIPTION,
   MAX_RUNS,
