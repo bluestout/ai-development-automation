@@ -110,7 +110,12 @@ async function runAgent(ctx) {
       strictMcpConfig: true, // ignore any project .mcp.json — only ours
       settingSources: [],    // no user/project settings
       maxTurns: MAX_AGENT_TURNS,
-      stderr: (d) => process.stderr.write(d)
+      stderr: (d) => process.stderr.write(d),
+      // The bundled Claude Code binary blocks --dangerously-skip-permissions
+      // (which bypassPermissions uses) when running as root. In a container we
+      // may end up as root regardless of the Dockerfile USER, so mark the run
+      // as sandboxed to satisfy the guard. The child inherits this env.
+      env: { ...process.env, IS_SANDBOX: "1" }
     }
   });
 
